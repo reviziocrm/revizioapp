@@ -985,7 +985,22 @@ export default function BoilerCRM() {
   };
 
   const editAppointment = (appointment) => {
-    setAppointmentForm(appointment);
+    const customer = getCustomerById(appointment.customerId);
+    setAppointmentForm({
+      customerId: appointment.customerId || '',
+      data: appointment.data || '',
+      ora: appointment.ora || '',
+      observatii: appointment.observatii || '',
+      isNewCustomer: false,
+      nume: customer?.nume || '',
+      telefon: customer?.telefon || '',
+      adresa: customer?.adresa || '',
+      tipServiciu: appointment.tipServiciu || '',
+      periodicitate: appointment.periodicitate || '',
+      tipCentrala: appointment.tipCentrala || '',
+      model: appointment.model || '',
+      ultimaRevizie: customer?.ultimaRevizie || ''
+    });
     setEditingAppointmentId(appointment.id);
     setShowAppointmentForm(true);
   };
