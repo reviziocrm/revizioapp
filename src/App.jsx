@@ -255,7 +255,16 @@ export default function BoilerCRM() {
         const appointmentData = await Promise.all(
           result.keys.map(async (key) => {
             const data = await storage.get(key);
-            return data ? JSON.parse(data.value) : null;
+            if (data) {
+              const apt = JSON.parse(data.value);
+              // Ensure all required fields exist
+              return {
+                ...apt,
+                completed: apt.completed || false,
+                cancelled: apt.cancelled || false
+              };
+            }
+            return null;
           })
         );
         setAppointments(appointmentData.filter(Boolean));
@@ -304,6 +313,8 @@ export default function BoilerCRM() {
       storage.set(newCustomer.id, JSON.stringify(newCustomer));
     }
     
+    const existingAppointment = editingAppointmentId ? appointments.find(a => a.id === editingAppointmentId) : null;
+    
     const appointment = {
       customerId: customerId,
       data: appointmentForm.data,
@@ -313,9 +324,10 @@ export default function BoilerCRM() {
       periodicitate: appointmentForm.periodicitate,
       tipCentrala: appointmentForm.tipCentrala || '',
       model: appointmentForm.model || '',
-      completed: false,
+      completed: existingAppointment?.completed || false,
+      cancelled: existingAppointment?.cancelled || false,
       id: editingAppointmentId || `appointment:${Date.now()}`,
-      createdAt: editingAppointmentId ? appointments.find(a => a.id === editingAppointmentId)?.createdAt : new Date().toISOString()
+      createdAt: existingAppointment?.createdAt || new Date().toISOString()
     };
 
     // Update local state immediately
