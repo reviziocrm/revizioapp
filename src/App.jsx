@@ -1389,10 +1389,28 @@ export default function BoilerCRM() {
   };
 
   const isDayInPast = (year, month, day) => {
-    const today = new Date();
-    today.setHours(0, 0, 0, 0);
+    const now = new Date();
     const checkDate = new Date(year, month, day);
-    return checkDate < today;
+    
+    // Set check date to start of day for comparison
+    const checkDateStart = new Date(year, month, day, 0, 0, 0, 0);
+    const todayStart = new Date(now.getFullYear(), now.getMonth(), now.getDate(), 0, 0, 0, 0);
+    
+    // If the date is before today, it's in the past
+    if (checkDateStart < todayStart) {
+      return true;
+    }
+    
+    // If it's today, check if all working hours (07-20) have passed
+    if (checkDateStart.getTime() === todayStart.getTime()) {
+      const lastWorkingHour = 20;
+      // If current hour is past the last working hour, consider today as "past"
+      if (now.getHours() >= lastWorkingHour) {
+        return true;
+      }
+    }
+    
+    return false;
   };
 
   const checkOverbooking = (date, hour, minute) => {
@@ -1977,27 +1995,22 @@ export default function BoilerCRM() {
                     onChange={(e) => handleTimeChange(e.target.value, undefined)}
                     className="px-4 py-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 text-base min-h-[48px] flex-1"
                   >
-                    {['07', '08', '09', '10', '11', '12', '13', '14', '15', '16', '17', '18', '19', '20'].map(h => {
+                    {['07', '08', '09', '10', '11', '12', '13', '14', '15', '16', '17', '18', '19', '20'].filter(h => {
                       const now = new Date();
                       const isToday = calendarPicker.selectedDate && 
                         calendarPicker.selectedDate.getDate() === now.getDate() &&
                         calendarPicker.selectedDate.getMonth() === now.getMonth() &&
                         calendarPicker.selectedDate.getFullYear() === now.getFullYear();
-                      const isPastHour = isToday && calendarPicker.validateFuture && parseInt(h) < now.getHours();
-                      const isCurrentHourPastMinutes = isToday && calendarPicker.validateFuture && 
-                        parseInt(h) === now.getHours() && parseInt(calendarPicker.selectedMinute) <= now.getMinutes();
-                      
-                      return (
-                        <option 
-                          key={h} 
-                          value={h} 
-                          disabled={isPastHour}
-                          className={isPastHour ? 'text-gray-300' : ''}
-                        >
-                          {h}{isPastHour ? ' (trecut)' : ''}
-                        </option>
-                      );
-                    })}
+                      // If it's today and validateFuture is on, filter out past hours
+                      if (isToday && calendarPicker.validateFuture) {
+                        return parseInt(h) > now.getHours();
+                      }
+                      return true;
+                    }).map(h => (
+                      <option key={h} value={h}>
+                        {h}
+                      </option>
+                    ))}
                   </select>
                   <span className="text-2xl font-bold">:</span>
                   <select
@@ -2005,27 +2018,23 @@ export default function BoilerCRM() {
                     onChange={(e) => handleTimeChange(undefined, e.target.value)}
                     className="px-4 py-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 text-base min-h-[48px] flex-1"
                   >
-                    {['00', '15', '30', '45'].map(m => {
+                    {['00', '15', '30', '45'].filter(m => {
                       const now = new Date();
                       const isToday = calendarPicker.selectedDate && 
                         calendarPicker.selectedDate.getDate() === now.getDate() &&
                         calendarPicker.selectedDate.getMonth() === now.getMonth() &&
                         calendarPicker.selectedDate.getFullYear() === now.getFullYear();
                       const isCurrentHour = parseInt(calendarPicker.selectedHour) === now.getHours();
-                      const isPastMinute = isToday && calendarPicker.validateFuture && isCurrentHour && parseInt(m) <= now.getMinutes();
-                      const isHourInPast = isToday && calendarPicker.validateFuture && parseInt(calendarPicker.selectedHour) < now.getHours();
-                      
-                      return (
-                        <option 
-                          key={m} 
-                          value={m}
-                          disabled={isPastMinute || isHourInPast}
-                          className={(isPastMinute || isHourInPast) ? 'text-gray-300' : ''}
-                        >
-                          {m}{(isPastMinute || isHourInPast) ? ' (trecut)' : ''}
-                        </option>
-                      );
-                    })}
+                      // If it's today, current hour, and validateFuture is on, filter out past minutes
+                      if (isToday && calendarPicker.validateFuture && isCurrentHour) {
+                        return parseInt(m) > now.getMinutes();
+                      }
+                      return true;
+                    }).map(m => (
+                      <option key={m} value={m}>
+                        {m}
+                      </option>
+                    ))}
                   </select>
                 </div>
                 {(() => {
@@ -2038,7 +2047,7 @@ export default function BoilerCRM() {
                   if (isToday && calendarPicker.validateFuture) {
                     return (
                       <p className="text-xs text-gray-500 mt-2">
-                        Ora curentă: {String(now.getHours()).padStart(2, '0')}:{String(now.getMinutes()).padStart(2, '0')} - orele din trecut sunt dezactivate
+                        Ora curentă: {String(now.getHours()).padStart(2, '0')}:{String(now.getMinutes()).padStart(2, '0')} - sunt afișate doar orele disponibile
                       </p>
                     );
                   }
