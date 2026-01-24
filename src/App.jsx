@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useRef } from 'react';
-import { Plus, Search, Phone, MapPin, Calendar, Wrench, AlertCircle, Clock, Home, Users, CalendarDays, Bell, Filter, ChevronLeft, ChevronRight, X, Settings, Shield, Trash2, Download, Upload, Key, LogOut } from 'lucide-react';
+import { Plus, Search, Phone, MapPin, Calendar, Wrench, AlertCircle, Clock, Home, Users, CalendarDays, Bell, Filter, ChevronLeft, ChevronRight, X, Settings, Shield, Trash2, Download, Upload, Key, LogOut, MessageCircle } from 'lucide-react';
 
 // Storage wrapper pentru localStorage (înlocuiește storage)
 const storage = {
@@ -1061,6 +1061,52 @@ export default function BoilerCRM() {
     return appointments
       .filter(a => a.data === today && !a.completed && !a.cancelled)
       .sort((a, b) => a.ora.localeCompare(b.ora)); // Earliest time first
+  };
+
+  const getTomorrowAppointments = () => {
+    const tomorrow = new Date();
+    tomorrow.setDate(tomorrow.getDate() + 1);
+    const year = tomorrow.getFullYear();
+    const month = String(tomorrow.getMonth() + 1).padStart(2, '0');
+    const day = String(tomorrow.getDate()).padStart(2, '0');
+    const tomorrowStr = `${year}-${month}-${day}`;
+    
+    return appointments
+      .filter(a => a.data === tomorrowStr && !a.completed && !a.cancelled)
+      .sort((a, b) => a.ora.localeCompare(b.ora));
+  };
+
+  const sendWhatsAppReminder = (appointment, customer) => {
+    if (!customer || !customer.telefon) return;
+    
+    // Format phone number for WhatsApp
+    let phone = customer.telefon.replace(/\s/g, '').replace(/^0/, '40');
+    if (!phone.startsWith('+') && !phone.startsWith('40')) {
+      phone = '40' + phone;
+    }
+    
+    // Format date nicely
+    const aptDate = new Date(appointment.data);
+    const dateStr = aptDate.toLocaleDateString('ro-RO', { 
+      weekday: 'long', 
+      day: 'numeric', 
+      month: 'long' 
+    });
+    
+    // Create reminder message
+    const message = `Bună ziua ${customer.nume}! 👋
+
+Vă reamintim că aveți programare *mâine, ${dateStr}* la ora *${appointment.ora}*.
+
+📍 Adresa: ${customer.adresa}
+🔧 Serviciu: ${appointment.tipServiciu || customer.tipServiciu || 'Revizie'}
+
+Vă rugăm să confirmați prezența răspunzând la acest mesaj.
+
+Mulțumim! 🙏`;
+
+    const encodedMessage = encodeURIComponent(message);
+    window.open(`https://wa.me/${phone}?text=${encodedMessage}`, '_blank');
   };
 
   // Get revision alerts based on completed appointments with specific service types
@@ -2981,6 +3027,88 @@ export default function BoilerCRM() {
               </div>
             )}
             
+            {/* Tomorrow Reminders on Today Tab */}
+            {getTomorrowAppointments().length > 0 && (
+              <div className="bg-gradient-to-r from-green-50 to-emerald-50 rounded-lg shadow-sm p-4 sm:p-6 mb-4 border border-green-200">
+                <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3 mb-4">
+                  <div className="flex items-center gap-3">
+                    <div className="bg-green-100 p-2 rounded-full">
+                      <MessageCircle className="text-green-600" size={24} />
+                    </div>
+                    <div>
+                      <h2 className="text-lg font-semibold text-green-800">📲 Remindere pentru Mâine ({getTomorrowAppointments().length})</h2>
+                      <p className="text-sm text-green-600">Trimite reminder WhatsApp clienților programați mâine</p>
+                    </div>
+                  </div>
+                  {getTomorrowAppointments().length > 1 && (
+                    <button
+                      onClick={() => {
+                        const appointmentsWithPhone = getTomorrowAppointments().filter(apt => {
+                          const customer = getCustomerById(apt.customerId);
+                          return customer?.telefon;
+                        });
+                        if (appointmentsWithPhone.length === 0) {
+                          alert('Niciun client nu are număr de telefon valid.');
+                          return;
+                        }
+                        if (confirm(`Se vor deschide ${appointmentsWithPhone.length} ferestre WhatsApp.\n\nTrimite fiecare mesaj manual apăsând Send în WhatsApp.\n\nContinui?`)) {
+                          appointmentsWithPhone.forEach((apt, index) => {
+                            const customer = getCustomerById(apt.customerId);
+                            setTimeout(() => {
+                              sendWhatsAppReminder(apt, customer);
+                            }, index * 1500); // 1.5 secunde între fiecare pentru a nu supraîncărca
+                          });
+                        }
+                      }}
+                      className="flex items-center justify-center gap-2 px-4 py-2.5 bg-green-700 text-white rounded-lg font-medium hover:bg-green-800 transition min-h-[44px]"
+                    >
+                      <MessageCircle size={18} />
+                      Trimite Toate ({getTomorrowAppointments().filter(apt => getCustomerById(apt.customerId)?.telefon).length})
+                    </button>
+                  )}
+                </div>
+                
+                <div className="space-y-3">
+                  {getTomorrowAppointments().map((apt) => {
+                    const customer = getCustomerById(apt.customerId);
+                    
+                    return (
+                      <div key={apt.id} className="bg-white rounded-lg p-4 flex flex-col sm:flex-row sm:items-center justify-between gap-3 border border-green-100">
+                        <div className="flex-1">
+                          <div className="flex items-center gap-2 mb-1">
+                            <span className="font-semibold text-gray-800">{customer?.nume || 'Client șters'}</span>
+                            <span className="text-sm bg-green-100 text-green-700 px-2 py-0.5 rounded">{apt.ora}</span>
+                          </div>
+                          <div className="flex items-center gap-3 text-sm text-gray-600">
+                            <span className="flex items-center gap-1">
+                              <Phone size={14} />
+                              {customer?.telefon || 'N/A'}
+                            </span>
+                            <span className="flex items-center gap-1">
+                              <Wrench size={14} />
+                              {apt.tipServiciu || 'Revizie'}
+                            </span>
+                          </div>
+                        </div>
+                        <button
+                          onClick={() => sendWhatsAppReminder(apt, customer)}
+                          disabled={!customer?.telefon}
+                          className={`flex items-center justify-center gap-2 px-4 py-2.5 rounded-lg font-medium transition min-h-[44px] ${
+                            customer?.telefon 
+                              ? 'bg-green-600 text-white hover:bg-green-700' 
+                              : 'bg-gray-200 text-gray-400 cursor-not-allowed'
+                          }`}
+                        >
+                          <MessageCircle size={18} />
+                          Trimite Reminder
+                        </button>
+                      </div>
+                    );
+                  })}
+                </div>
+              </div>
+            )}
+            
             {getTodayAppointments().length === 0 ? (
               <div className="bg-white rounded-lg shadow-sm p-8 sm:p-12 text-center">
                 <Calendar className="mx-auto mb-4 text-gray-400" size={48} />
@@ -3062,6 +3190,84 @@ export default function BoilerCRM() {
         {/* TAB PROGRAMARI */}
         {activeTab === 'appointments' && (
           <div>
+            {/* Tomorrow Reminders Section */}
+            {getTomorrowAppointments().length > 0 && (
+              <div className="bg-gradient-to-r from-green-50 to-emerald-50 rounded-lg shadow-sm p-4 sm:p-6 mb-4 border border-green-200">
+                <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3 mb-4">
+                  <div className="flex items-center gap-3">
+                    <div className="bg-green-100 p-2 rounded-full">
+                      <MessageCircle className="text-green-600" size={24} />
+                    </div>
+                    <div>
+                      <h2 className="text-lg sm:text-xl font-semibold text-green-800">Remindere pentru Mâine ({getTomorrowAppointments().length})</h2>
+                      <p className="text-sm text-green-600">Trimite reminder WhatsApp clienților programați mâine</p>
+                    </div>
+                  </div>
+                  {getTomorrowAppointments().length > 1 && (
+                    <button
+                      onClick={() => {
+                        const appointmentsWithPhone = getTomorrowAppointments().filter(apt => {
+                          const customer = getCustomerById(apt.customerId);
+                          return customer?.telefon;
+                        });
+                        if (appointmentsWithPhone.length === 0) {
+                          alert('Niciun client nu are număr de telefon valid.');
+                          return;
+                        }
+                        if (confirm(`Se vor deschide ${appointmentsWithPhone.length} ferestre WhatsApp.\n\nTrimite fiecare mesaj manual apăsând Send în WhatsApp.\n\nContinui?`)) {
+                          appointmentsWithPhone.forEach((apt, index) => {
+                            const customer = getCustomerById(apt.customerId);
+                            setTimeout(() => {
+                              sendWhatsAppReminder(apt, customer);
+                            }, index * 1500);
+                          });
+                        }
+                      }}
+                      className="flex items-center justify-center gap-2 px-4 py-2.5 bg-green-700 text-white rounded-lg font-medium hover:bg-green-800 transition min-h-[44px]"
+                    >
+                      <MessageCircle size={18} />
+                      Trimite Toate ({getTomorrowAppointments().filter(apt => getCustomerById(apt.customerId)?.telefon).length})
+                    </button>
+                  )}
+                </div>
+                
+                <div className="space-y-3">
+                  {getTomorrowAppointments().map((apt) => {
+                    const customer = getCustomerById(apt.customerId);
+                    
+                    return (
+                      <div key={apt.id} className="bg-white rounded-lg p-4 flex flex-col sm:flex-row sm:items-center justify-between gap-3 border border-green-100">
+                        <div className="flex-1">
+                          <div className="flex items-center gap-2 mb-1">
+                            <span className="font-semibold text-gray-800">{customer?.nume || 'Client șters'}</span>
+                            <span className="text-sm bg-green-100 text-green-700 px-2 py-0.5 rounded">{apt.ora}</span>
+                          </div>
+                          <div className="text-sm text-gray-600">
+                            <span className="flex items-center gap-1">
+                              <Phone size={14} />
+                              {customer?.telefon || 'N/A'}
+                            </span>
+                          </div>
+                        </div>
+                        <button
+                          onClick={() => sendWhatsAppReminder(apt, customer)}
+                          disabled={!customer?.telefon}
+                          className={`flex items-center justify-center gap-2 px-4 py-2.5 rounded-lg font-medium transition min-h-[44px] ${
+                            customer?.telefon 
+                              ? 'bg-green-600 text-white hover:bg-green-700' 
+                              : 'bg-gray-200 text-gray-400 cursor-not-allowed'
+                          }`}
+                        >
+                          <MessageCircle size={18} />
+                          Trimite Reminder
+                        </button>
+                      </div>
+                    );
+                  })}
+                </div>
+              </div>
+            )}
+
             <div className="bg-white rounded-lg shadow-sm p-6 mb-4">
               <h2 className="text-xl font-semibold mb-4">Programări</h2>
 
