@@ -2622,12 +2622,33 @@ export default function BoilerCRM() {
               <p className="text-gray-600 text-sm sm:text-base">{new Date().toLocaleDateString('ro-RO', { weekday: 'long', year: 'numeric', month: 'long', day: 'numeric' })}</p>
               <button
                 onClick={() => {
-                  const newState = !showAppointmentForm;
-                  setShowAppointmentForm(newState);
-                  if (newState) {
+                  if (!showAppointmentForm) {
+                    // Opening form for new appointment - reset it first
+                    setAppointmentForm({
+                      customerId: '',
+                      data: '',
+                      ora: '',
+                      observatii: '',
+                      isNewCustomer: false,
+                      nume: '',
+                      telefon: '',
+                      adresa: '',
+                      tipServiciu: '',
+                      periodicitate: '',
+                      tipCentrala: '',
+                      model: '',
+                      ultimaRevizie: ''
+                    });
+                    setCustomerSearchTerm('');
+                    setShowCustomerDropdown(false);
+                    setEditingAppointmentId(null);
+                    setShowAppointmentForm(true);
                     setTimeout(() => {
                       appointmentFormRef.current?.scrollIntoView({ behavior: 'smooth', block: 'start' });
                     }, 100);
+                  } else {
+                    // Closing form
+                    setShowAppointmentForm(false);
                   }
                 }}
                 className="flex items-center justify-center gap-2 w-full sm:w-auto px-4 py-3 sm:py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 mt-4 text-base font-medium min-h-[48px]"
