@@ -1015,6 +1015,12 @@ export default function BoilerCRM() {
     });
     setEditingAppointmentId(appointment.id);
     setShowAppointmentForm(true);
+    // Switch to today tab where the form is displayed
+    setActiveTab('today');
+    // Scroll to form after a short delay
+    setTimeout(() => {
+      appointmentFormRef.current?.scrollIntoView({ behavior: 'smooth', block: 'start' });
+    }, 100);
   };
 
   const filteredCustomers = customers.filter(c => {
