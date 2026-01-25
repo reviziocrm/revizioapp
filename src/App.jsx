@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useRef } from 'react';
-import { Plus, Search, Phone, MapPin, Calendar, Wrench, AlertCircle, Clock, Home, Users, CalendarDays, Bell, Filter, ChevronLeft, ChevronRight, X, Settings, Shield, Trash2, Download, Upload, Key, LogOut, MessageCircle, Eye, EyeOff, Mail, Lock } from 'lucide-react';
+import { Plus, Search, Phone, MapPin, Calendar, Wrench, AlertCircle, Clock, Home, Users, CalendarDays, Bell, Filter, ChevronLeft, ChevronRight, X, Settings, Shield, Trash2, Download, Upload, Key, LogOut, MessageCircle, Eye, EyeOff, Mail, Lock, FlaskConical } from 'lucide-react';
 
 // Storage wrapper pentru localStorage (înlocuiește storage)
 const storage = {
@@ -27,6 +27,36 @@ const storage = {
   }
 };
 
+// Environment detection
+const isDemo = window.location.hostname.includes('demo');
+const ENV_CONFIG = {
+  demo: {
+    name: 'DEMO',
+    primaryColor: 'purple',
+    gradientFrom: 'from-purple-800',
+    gradientVia: 'via-purple-900',
+    gradientTo: 'to-slate-950',
+    accentColor: 'purple-600',
+    badgeColor: 'bg-purple-600',
+    buttonColor: 'bg-purple-600 hover:bg-purple-700',
+    loginMethod: 'key', // License key login
+    trialDays: 30
+  },
+  production: {
+    name: 'PRODUCȚIE',
+    primaryColor: 'blue',
+    gradientFrom: 'from-slate-800',
+    gradientVia: 'via-slate-900', 
+    gradientTo: 'to-slate-950',
+    accentColor: 'blue-600',
+    badgeColor: 'bg-blue-600',
+    buttonColor: 'bg-blue-600 hover:bg-blue-700',
+    loginMethod: 'email', // Email only login
+    trialDays: null
+  }
+};
+const ENV = isDemo ? ENV_CONFIG.demo : ENV_CONFIG.production;
+
 export default function BoilerCRM() {
   // License state
   const [licenseStatus, setLicenseStatus] = useState('checking'); // checking, inactive, active, expired, suspended
@@ -35,7 +65,7 @@ export default function BoilerCRM() {
   const [loginForm, setLoginForm] = useState({ licenseKey: '', password: '', email: '' });
   const [loginError, setLoginError] = useState('');
   const [daysRemaining, setDaysRemaining] = useState(null);
-  const [loginTab, setLoginTab] = useState('key'); // 'key' or 'email'
+  const [loginTab, setLoginTab] = useState(isDemo ? 'key' : 'email'); // Default based on environment
   
   // Password change states
   const [showPasswordChange, setShowPasswordChange] = useState(false);
@@ -202,9 +232,10 @@ export default function BoilerCRM() {
     
     const password = loginForm.password.trim();
 
-    if (loginTab === 'key') {
-      // License key login
+    // DEMO environment: License Key login
+    if (isDemo) {
       const key = loginForm.licenseKey.trim().toUpperCase();
+      const emailInput = loginForm.email.trim().toLowerCase();
       
       if (!key || !password) {
         setLoginError('Introduceți cheia de licență și parola');
@@ -231,22 +262,21 @@ export default function BoilerCRM() {
           }
           
           // Check if expired
-          if (activation.expiresAt && !activation.isUnlimited) {
+          if (activation.expiresAt) {
             const expiresAt = new Date(activation.expiresAt);
             const now = new Date();
             if (expiresAt < now) {
-              setLoginError('Licența a expirat. Contactați administratorul pentru reînnoire.');
+              setLoginError('Perioada de trial a expirat. Pentru acces complet, vizitați revizioapp.ro și deveniți client activ.');
               return;
             }
             const daysLeft = Math.ceil((expiresAt - now) / (1000 * 60 * 60 * 24));
             setDaysRemaining(daysLeft);
-          } else {
-            setDaysRemaining(null);
           }
           
-          // Update login count
+          // Update login count (email can be updated if provided)
           const updatedActivation = {
             ...activation,
+            email: emailInput || activation.email,
             lastLoginAt: new Date().toISOString(),
             loginCount: (activation.loginCount || 0) + 1
           };
@@ -260,17 +290,25 @@ export default function BoilerCRM() {
         }
       }
 
-      // New activation - create trial
+      // New activation - email is REQUIRED
+      if (!emailInput || !emailInput.includes('@')) {
+        setLoginError('Adresa de email este obligatorie pentru activare');
+        return;
+      }
+
+      // New activation - create trial (DEMO only)
       const now = new Date();
-      const expiresAt = new Date(now.getTime() + 30 * 24 * 60 * 60 * 1000); // 30 days trial
+      const expiresAt = new Date(now.getTime() + ENV.trialDays * 24 * 60 * 60 * 1000);
       
       const activation = {
         licenseKey: key,
         password: password,
+        email: emailInput,
         activatedAt: now.toISOString(),
         expiresAt: expiresAt.toISOString(),
         status: 'trial',
         isUnlimited: false,
+        environment: 'demo',
         lastLoginAt: now.toISOString(),
         loginCount: 1,
         loginType: 'key'
@@ -278,13 +316,13 @@ export default function BoilerCRM() {
 
       await storage.set('app:activation', JSON.stringify(activation));
       setLicenseInfo(activation);
-      setDaysRemaining(30);
+      setDaysRemaining(ENV.trialDays);
       setLicenseStatus('active');
       setShowLoginForm(false);
       setLoginForm({ licenseKey: '', password: '', email: '' });
       
     } else {
-      // Email login
+      // PRODUCTION environment: Email login only
       const email = loginForm.email.trim().toLowerCase();
       
       if (!email || !password) {
@@ -292,11 +330,13 @@ export default function BoilerCRM() {
         return;
       }
 
-      // Check if we have stored email credentials
+      // Check if we have stored activation
       const existingActivation = await storage.get('app:activation');
+      
       if (existingActivation) {
         const activation = JSON.parse(existingActivation.value);
         
+        // Check if email matches existing activation
         if (activation.email && activation.email.toLowerCase() === email) {
           if (activation.password !== password) {
             setLoginError('Parolă incorectă');
@@ -308,7 +348,8 @@ export default function BoilerCRM() {
           const updatedActivation = {
             ...activation,
             lastLoginAt: now.toISOString(),
-            loginCount: (activation.loginCount || 0) + 1
+            loginCount: (activation.loginCount || 0) + 1,
+            loginType: 'email'
           };
           await storage.set('app:activation', JSON.stringify(updatedActivation));
           
@@ -329,7 +370,32 @@ export default function BoilerCRM() {
         }
       }
 
-      setLoginError('Email sau parolă incorectă. Dacă aveți cont nou, contactați administratorul.');
+      // NEW PAID ACCOUNT ACTIVATION (Production only)
+      // If user enters email + password and it works, create unlimited account
+      // This allows new paid users to activate their account
+      
+      const now = new Date();
+      const newActivation = {
+        email: email,
+        password: password,
+        activatedAt: now.toISOString(),
+        status: 'active',
+        isUnlimited: true,
+        environment: 'production',
+        lastLoginAt: now.toISOString(),
+        loginCount: 1,
+        loginType: 'email',
+        mustChangePassword: true // First login must change password
+      };
+      
+      await storage.set('app:activation', JSON.stringify(newActivation));
+      setLicenseInfo(newActivation);
+      setDaysRemaining(null);
+      
+      // Force password change on first email login
+      setMustChangePassword(true);
+      setShowPasswordChange(true);
+      setLoginForm({ licenseKey: '', password: '', email: '' });
     }
   };
 
@@ -2043,7 +2109,7 @@ Mulțumim! 🙏`;
     <div className="min-h-screen bg-gray-50">
       {/* License Check - Loading */}
       {licenseStatus === 'checking' && (
-        <div className="min-h-screen flex items-center justify-center bg-gradient-to-br from-blue-600 to-blue-800">
+        <div className={`min-h-screen flex items-center justify-center bg-gradient-to-br ${ENV.gradientFrom} ${ENV.gradientVia} ${ENV.gradientTo}`}>
           <div className="text-center text-white">
             <div className="animate-spin rounded-full h-12 w-12 border-4 border-white border-t-transparent mx-auto mb-4"></div>
             <p className="text-lg">Se verifică licența...</p>
@@ -2053,8 +2119,66 @@ Mulțumim! 🙏`;
 
       {/* License Check - Login Required */}
       {(licenseStatus === 'inactive' || showLoginForm) && licenseStatus !== 'checking' && !mustChangePassword && (
-        <div className="min-h-screen flex items-center justify-center bg-gradient-to-br from-blue-600 to-blue-800 p-4">
-          <div className="bg-white rounded-2xl shadow-2xl p-6 sm:p-8 w-full max-w-md">
+        <div className="min-h-screen flex items-center justify-center p-4 relative overflow-hidden">
+          {/* Professional Background with Gas/Heating Theme */}
+          <div className={`absolute inset-0 bg-gradient-to-br ${ENV.gradientFrom} ${ENV.gradientVia} ${ENV.gradientTo}`}>
+            {/* Decorative pipes pattern */}
+            <svg className="absolute inset-0 w-full h-full opacity-10" xmlns="http://www.w3.org/2000/svg">
+              <defs>
+                <pattern id="pipes" x="0" y="0" width="100" height="100" patternUnits="userSpaceOnUse">
+                  <path d="M0 50 H40 M60 50 H100" stroke={isDemo ? "#a855f7" : "#60a5fa"} strokeWidth="4" fill="none"/>
+                  <path d="M50 0 V40 M50 60 V100" stroke={isDemo ? "#a855f7" : "#60a5fa"} strokeWidth="4" fill="none"/>
+                  <circle cx="50" cy="50" r="8" fill="none" stroke="#f97316" strokeWidth="2"/>
+                  <circle cx="50" cy="50" r="3" fill="#f97316"/>
+                </pattern>
+              </defs>
+              <rect width="100%" height="100%" fill="url(#pipes)"/>
+            </svg>
+            
+            {/* Floating elements */}
+            <div className="absolute top-20 left-10 w-20 h-20 opacity-20">
+              <svg viewBox="0 0 100 100" fill="none" xmlns="http://www.w3.org/2000/svg">
+                <rect x="20" y="30" width="60" height="50" rx="5" stroke={isDemo ? "#a855f7" : "#60a5fa"} strokeWidth="3"/>
+                <path d="M30 50 H70" stroke="#f97316" strokeWidth="2"/>
+                <circle cx="50" cy="50" r="8" fill="#f97316" opacity="0.5"/>
+                <path d="M40 20 V30 M60 20 V30" stroke={isDemo ? "#a855f7" : "#60a5fa"} strokeWidth="3"/>
+              </svg>
+            </div>
+            <div className="absolute bottom-32 right-20 w-24 h-24 opacity-15">
+              <svg viewBox="0 0 100 100" fill="none" xmlns="http://www.w3.org/2000/svg">
+                <circle cx="50" cy="50" r="30" stroke="#22c55e" strokeWidth="3"/>
+                <path d="M50 30 V50 L65 60" stroke="#22c55e" strokeWidth="3" strokeLinecap="round"/>
+              </svg>
+            </div>
+            <div className="absolute top-1/3 right-10 w-16 h-16 opacity-20">
+              <svg viewBox="0 0 100 100" fill="none" xmlns="http://www.w3.org/2000/svg">
+                <path d="M20 80 Q50 20 80 80" stroke="#f97316" strokeWidth="4" fill="none"/>
+                <circle cx="50" cy="40" r="15" stroke="#fbbf24" strokeWidth="2" fill="none"/>
+              </svg>
+            </div>
+            <div className="absolute bottom-20 left-1/4 w-32 h-8 opacity-10">
+              <svg viewBox="0 0 200 40" fill="none" xmlns="http://www.w3.org/2000/svg">
+                <path d="M0 20 H60 M80 20 H120 M140 20 H200" stroke={isDemo ? "#a855f7" : "#60a5fa"} strokeWidth="6"/>
+                <circle cx="70" cy="20" r="10" stroke={isDemo ? "#a855f7" : "#60a5fa"} strokeWidth="3" fill="none"/>
+                <circle cx="130" cy="20" r="10" stroke={isDemo ? "#a855f7" : "#60a5fa"} strokeWidth="3" fill="none"/>
+              </svg>
+            </div>
+            
+            {/* Gradient overlays */}
+            <div className="absolute inset-0 bg-gradient-to-t from-slate-900/80 via-transparent to-slate-900/40"></div>
+            <div className={`absolute bottom-0 left-0 right-0 h-32 bg-gradient-to-t ${isDemo ? 'from-purple-500/10' : 'from-orange-500/10'} to-transparent`}></div>
+          </div>
+          
+          {/* Login Card */}
+          <div className={`bg-white rounded-2xl shadow-2xl p-6 sm:p-8 w-full max-w-md relative z-10 border ${isDemo ? 'border-purple-200' : 'border-slate-200'}`}>
+            {/* Demo Banner */}
+            {isDemo && (
+              <div className="bg-purple-600 text-white text-center py-2 px-4 rounded-lg mb-4 flex items-center justify-center gap-2">
+                <FlaskConical size={18} />
+                <span className="font-medium">VERSIUNE DEMO - 30 zile gratuit</span>
+              </div>
+            )}
+            
             <div className="text-center mb-6">
               {/* Logo */}
               <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 380 220" className="h-20 mx-auto mb-4">
@@ -2063,54 +2187,45 @@ Mulțumim! 🙏`;
                 <path d="M116 25 L116 -8 Q116 -16, 124 -16 L340 -16 Q358 -16, 358 0 L358 10 Q358 18, 350 18 L350 10" stroke="#64748b" strokeWidth="12" strokeLinecap="round" fill="none"/>
                 <path d="M350 85 Q350 95, 358 95 L358 180 Q358 195, 345 195 L141 195 Q133 195, 133 187 L133 185" stroke="#64748b" strokeWidth="12" strokeLinecap="round" fill="none"/>
                 <path d="M350 115 Q365 115, 365 130 L365 188 Q365 205, 350 205 L75 205 Q61 205, 61 191 L61 185" stroke="#64748b" strokeWidth="12" strokeLinecap="round" fill="none"/>
-                <rect x="40" y="25" width="120" height="160" rx="10" ry="10" fill="#2563eb"/>
-                <rect x="55" y="40" width="90" height="35" rx="5" ry="5" fill="#1e40af"/>
-                <rect x="62" y="47" width="45" height="21" rx="3" ry="3" fill="#1e3a8a"/>
-                <circle cx="120" cy="52" r="5" fill="#3b82f6"/>
-                <circle cx="120" cy="65" r="5" fill="#3b82f6"/>
+                <rect x="40" y="25" width="120" height="160" rx="10" ry="10" fill={isDemo ? "#9333ea" : "#2563eb"}/>
+                <rect x="55" y="40" width="90" height="35" rx="5" ry="5" fill={isDemo ? "#7c3aed" : "#1e40af"}/>
+                <rect x="62" y="47" width="45" height="21" rx="3" ry="3" fill={isDemo ? "#6b21a8" : "#1e3a8a"}/>
+                <circle cx="120" cy="52" r="5" fill={isDemo ? "#a855f7" : "#3b82f6"}/>
+                <circle cx="120" cy="65" r="5" fill={isDemo ? "#a855f7" : "#3b82f6"}/>
                 <circle cx="135" cy="58" r="7" fill="#ef4444"/>
-                <rect x="65" y="90" width="70" height="60" rx="5" ry="5" fill="#1e3a8a"/>
+                <rect x="65" y="90" width="70" height="60" rx="5" ry="5" fill={isDemo ? "#6b21a8" : "#1e3a8a"}/>
                 <path d="M100 143 C100 143, 75 120, 75 105 C75 95, 83 88, 100 97 C117 88, 125 95, 125 105 C125 120, 100 143, 100 143Z" fill="#f97316"/>
                 <path d="M100 136 C100 136, 85 120, 85 110 C85 103, 91 98, 100 104 C109 98, 115 103, 115 110 C115 120, 100 136, 100 136Z" fill="#fbbf24"/>
                 <circle cx="148" cy="168" r="22" fill="#22c55e"/>
                 <path d="M137 168 L145 177 L161 159" stroke="white" strokeWidth="5" strokeLinecap="round" strokeLinejoin="round" fill="none"/>
-                <text x="175" y="85" fontFamily="Arial, sans-serif" fontSize="48" fontWeight="bold" fill="#2563eb">Revizio</text>
+                <text x="175" y="85" fontFamily="Arial, sans-serif" fontSize="48" fontWeight="bold" fill={isDemo ? "#9333ea" : "#2563eb"}>Revizio</text>
                 <text x="175" y="123" fontFamily="Arial, sans-serif" fontSize="28" fill="#f97316">App</text>
-                <text x="175" y="155" fontFamily="Arial, sans-serif" fontSize="14" fill="#64748b">Revizii organizate simplu</text>
+                <text x="175" y="155" fontFamily="Arial, sans-serif" fontSize="14" fill="#64748b">{isDemo ? "Versiune Demo" : "Revizii organizate simplu"}</text>
               </svg>
             </div>
 
-            {/* Login Tabs */}
-            <div className="flex gap-2 mb-6">
-              <button
-                onClick={() => {
-                  setLoginTab('key');
-                  setLoginError('');
-                }}
-                className={`flex-1 py-3 rounded-lg font-medium transition flex items-center justify-center gap-2 ${
-                  loginTab === 'key' 
-                    ? 'bg-blue-600 text-white' 
-                    : 'bg-gray-100 text-gray-600 hover:bg-gray-200'
-                }`}
-              >
-                <Key size={18} />
-                Cheie Licență
-              </button>
-              <button
-                onClick={() => {
-                  setLoginTab('email');
-                  setLoginError('');
-                }}
-                className={`flex-1 py-3 rounded-lg font-medium transition flex items-center justify-center gap-2 ${
-                  loginTab === 'email' 
-                    ? 'bg-blue-600 text-white' 
-                    : 'bg-gray-100 text-gray-600 hover:bg-gray-200'
-                }`}
-              >
-                <Mail size={18} />
-                Email
-              </button>
-            </div>
+            {/* Login Method - Based on Environment */}
+            {isDemo ? (
+              /* DEMO: Show only License Key login */
+              <div className="mb-4">
+                <div className="bg-purple-50 border border-purple-200 rounded-lg p-3 mb-4">
+                  <p className="text-sm text-purple-700 text-center">
+                    <Key size={16} className="inline mr-1" />
+                    Introduceți cheia de licență primită pentru a activa perioada de test
+                  </p>
+                </div>
+              </div>
+            ) : (
+              /* PRODUCTION: Show only Email login */
+              <div className="mb-4">
+                <div className="bg-blue-50 border border-blue-200 rounded-lg p-3 mb-4">
+                  <p className="text-sm text-blue-700 text-center">
+                    <Mail size={16} className="inline mr-1" />
+                    Autentificați-vă cu credențialele primite de la administrator
+                  </p>
+                </div>
+              </div>
+            )}
 
             {loginError && (
               <div className="bg-red-50 border border-red-200 text-red-700 px-4 py-3 rounded-lg mb-4 text-sm">
@@ -2119,8 +2234,8 @@ Mulțumim! 🙏`;
             )}
 
             <div className="space-y-4">
-              {loginTab === 'key' ? (
-                /* License Key Login */
+              {isDemo ? (
+                /* DEMO: License Key Login */
                 <>
                   <div>
                     <label className="block text-sm font-medium text-gray-700 mb-2">Cheie Licență</label>
@@ -2128,7 +2243,7 @@ Mulțumim! 🙏`;
                       type="text"
                       value={loginForm.licenseKey}
                       onChange={(e) => setLoginForm({...loginForm, licenseKey: e.target.value.toUpperCase()})}
-                      className="w-full px-4 py-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500 text-center font-mono text-lg tracking-wider"
+                      className="w-full px-4 py-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-purple-500 focus:border-purple-500 text-center font-mono text-lg tracking-wider"
                       placeholder="XXXX-XXXX-XXXX-XXXX"
                       maxLength={19}
                     />
@@ -2139,13 +2254,26 @@ Mulțumim! 🙏`;
                       type="password"
                       value={loginForm.password}
                       onChange={(e) => setLoginForm({...loginForm, password: e.target.value})}
-                      className="w-full px-4 py-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
+                      className="w-full px-4 py-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-purple-500 focus:border-purple-500"
                       placeholder="••••••••••••"
                     />
                   </div>
+                  <div>
+                    <label className="block text-sm font-medium text-gray-700 mb-2">
+                      Email <span className="text-red-500">*</span>
+                    </label>
+                    <input
+                      type="email"
+                      value={loginForm.email}
+                      onChange={(e) => setLoginForm({...loginForm, email: e.target.value})}
+                      className="w-full px-4 py-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-purple-500 focus:border-purple-500"
+                      placeholder="email@exemplu.ro"
+                    />
+                    <p className="text-xs text-gray-500 mt-1">Obligatoriu pentru activarea perioadei de test</p>
+                  </div>
                 </>
               ) : (
-                /* Email Login */
+                /* PRODUCTION: Email Login Only */
                 <>
                   <div>
                     <label className="block text-sm font-medium text-gray-700 mb-2">Email</label>
@@ -2172,28 +2300,35 @@ Mulțumim! 🙏`;
               
               <button
                 onClick={handleLogin}
-                className="w-full py-3 bg-blue-600 text-white rounded-lg hover:bg-blue-700 font-medium text-lg transition min-h-[48px]"
+                className={`w-full py-3 text-white rounded-lg font-medium text-lg transition min-h-[48px] ${isDemo ? 'bg-purple-600 hover:bg-purple-700' : 'bg-blue-600 hover:bg-blue-700'}`}
               >
-                Autentificare
+                {isDemo ? 'Activează Trial' : 'Autentificare'}
               </button>
             </div>
 
             <div className="mt-6 text-center">
               <button
                 onClick={() => setShowForgotPassword(true)}
-                className="text-sm text-blue-600 hover:text-blue-800 underline"
+                className={`text-sm underline ${isDemo ? 'text-purple-600 hover:text-purple-800' : 'text-blue-600 hover:text-blue-800'}`}
               >
                 Am uitat parola
               </button>
             </div>
 
             <p className="text-center text-sm text-gray-500 mt-4">
-              Nu aveți cont? Contactați administratorul.
+              {isDemo ? (
+                <>
+                  Doriți acces complet? <a href="https://revizioapp.ro" className="text-purple-600 hover:underline font-medium">Deveniți client activ</a>
+                </>
+              ) : (
+                'Nu aveți cont? Contactați administratorul.'
+              )}
             </p>
             
             <div className="mt-6 pt-4 border-t border-gray-200">
               <p className="text-center text-xs text-gray-400">
                 Copyright © {new Date().getFullYear()} RevizioApp. Toate drepturile rezervate.
+                {isDemo && <span className="block mt-1 text-purple-500">Versiune Demo</span>}
               </p>
             </div>
           </div>
@@ -2490,8 +2625,19 @@ Mulțumim! 🙏`;
       {/* Main App - Only show when license is active */}
       {licenseStatus === 'active' && (
         <>
-      {/* License Warning Banner */}
-      {daysRemaining !== null && daysRemaining <= 7 && daysRemaining > 0 && (
+      {/* Demo Environment Banner */}
+      {isDemo && (
+        <div className="bg-purple-600 text-white px-4 py-2 text-center text-sm flex items-center justify-center gap-2">
+          <FlaskConical size={16} />
+          <span>VERSIUNE DEMO - {daysRemaining !== null ? `Mai aveți ${daysRemaining} ${daysRemaining === 1 ? 'zi' : 'zile'} de test` : 'Perioadă de test'}</span>
+          <a href="https://revizioapp.ro" className="ml-2 underline font-medium hover:text-purple-200">
+            Deveniți client activ →
+          </a>
+        </div>
+      )}
+
+      {/* License Warning Banner (Production) */}
+      {!isDemo && daysRemaining !== null && daysRemaining <= 7 && daysRemaining > 0 && (
         <div className="bg-orange-500 text-white px-4 py-2 text-center text-sm">
           <AlertCircle className="inline-block mr-2" size={16} />
           Licența expiră în {daysRemaining} {daysRemaining === 1 ? 'zi' : 'zile'}. Contactați administratorul pentru reînnoire.
