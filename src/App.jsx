@@ -47,6 +47,45 @@ export default function BoilerCRM() {
   
   // Forgot password modal
   const [showForgotPassword, setShowForgotPassword] = useState(false);
+  
+  // Cookie consent
+  const [showCookieConsent, setShowCookieConsent] = useState(false);
+  const [cookiePreferences, setCookiePreferences] = useState({
+    necessary: true, // Always true, can't be disabled
+    functional: false,
+    analytics: false
+  });
+  const [showCookieSettings, setShowCookieSettings] = useState(false);
+
+  // Check cookie consent on mount
+  useEffect(() => {
+    const consent = localStorage.getItem('cookieConsent');
+    if (!consent) {
+      setShowCookieConsent(true);
+    } else {
+      setCookiePreferences(JSON.parse(consent));
+    }
+  }, []);
+
+  const acceptAllCookies = () => {
+    const prefs = { necessary: true, functional: true, analytics: true };
+    localStorage.setItem('cookieConsent', JSON.stringify(prefs));
+    setCookiePreferences(prefs);
+    setShowCookieConsent(false);
+  };
+
+  const rejectOptionalCookies = () => {
+    const prefs = { necessary: true, functional: false, analytics: false };
+    localStorage.setItem('cookieConsent', JSON.stringify(prefs));
+    setCookiePreferences(prefs);
+    setShowCookieConsent(false);
+  };
+
+  const saveCookiePreferences = () => {
+    localStorage.setItem('cookieConsent', JSON.stringify(cookiePreferences));
+    setShowCookieConsent(false);
+    setShowCookieSettings(false);
+  };
 
   const [activeTab, setActiveTab] = useState('today');
   const [appointmentsSubTab, setAppointmentsSubTab] = useState('active');
@@ -2209,7 +2248,136 @@ Mulțumim! 🙏`;
             <p className="text-center text-sm text-gray-500 mt-4">
               Nu aveți cont? Contactați administratorul.
             </p>
+            
+            <div className="mt-6 pt-4 border-t border-gray-200">
+              <p className="text-center text-xs text-gray-400">
+                Copyright © {new Date().getFullYear()} RevizioApp. Toate drepturile rezervate.
+              </p>
+            </div>
           </div>
+          
+          {/* Cookie Consent Banner */}
+          {showCookieConsent && !showCookieSettings && (
+            <div className="fixed bottom-0 left-0 right-0 bg-gray-900 text-white p-4 shadow-lg z-50">
+              <div className="max-w-4xl mx-auto">
+                <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4">
+                  <div className="flex-1">
+                    <p className="text-sm">
+                      🍪 Acest site folosește cookie-uri pentru a vă oferi o experiență mai bună. 
+                      Cookie-urile necesare sunt esențiale pentru funcționarea site-ului.
+                    </p>
+                  </div>
+                  <div className="flex flex-wrap gap-2">
+                    <button
+                      onClick={() => setShowCookieSettings(true)}
+                      className="px-4 py-2 text-sm border border-gray-500 rounded-lg hover:bg-gray-800 transition"
+                    >
+                      Setări
+                    </button>
+                    <button
+                      onClick={rejectOptionalCookies}
+                      className="px-4 py-2 text-sm border border-gray-500 rounded-lg hover:bg-gray-800 transition"
+                    >
+                      Respinge opționale
+                    </button>
+                    <button
+                      onClick={acceptAllCookies}
+                      className="px-4 py-2 text-sm bg-blue-600 rounded-lg hover:bg-blue-700 transition"
+                    >
+                      Acceptă toate
+                    </button>
+                  </div>
+                </div>
+              </div>
+            </div>
+          )}
+          
+          {/* Cookie Settings Modal */}
+          {showCookieSettings && (
+            <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50 p-4">
+              <div className="bg-white rounded-2xl shadow-2xl p-6 w-full max-w-lg max-h-[90vh] overflow-y-auto">
+                <div className="flex justify-between items-center mb-4">
+                  <h3 className="text-xl font-semibold text-gray-900">🍪 Setări Cookie-uri</h3>
+                  <button 
+                    onClick={() => setShowCookieSettings(false)} 
+                    className="text-gray-500 hover:text-gray-700 p-2"
+                  >
+                    <X size={24} />
+                  </button>
+                </div>
+                
+                <p className="text-sm text-gray-600 mb-6">
+                  Alegeți ce tipuri de cookie-uri acceptați. Cookie-urile necesare nu pot fi dezactivate 
+                  deoarece sunt esențiale pentru funcționarea aplicației.
+                </p>
+                
+                <div className="space-y-4">
+                  {/* Necessary Cookies */}
+                  <div className="flex items-center justify-between p-4 bg-gray-50 rounded-lg">
+                    <div className="flex-1">
+                      <h4 className="font-medium text-gray-900">Cookie-uri necesare</h4>
+                      <p className="text-sm text-gray-500">Esențiale pentru funcționarea aplicației (autentificare, sesiune)</p>
+                    </div>
+                    <div className="ml-4">
+                      <input
+                        type="checkbox"
+                        checked={true}
+                        disabled
+                        className="w-5 h-5 rounded text-blue-600 cursor-not-allowed"
+                      />
+                    </div>
+                  </div>
+                  
+                  {/* Functional Cookies */}
+                  <div className="flex items-center justify-between p-4 bg-gray-50 rounded-lg">
+                    <div className="flex-1">
+                      <h4 className="font-medium text-gray-900">Cookie-uri funcționale</h4>
+                      <p className="text-sm text-gray-500">Memorează preferințele dvs. (setări, limba)</p>
+                    </div>
+                    <div className="ml-4">
+                      <input
+                        type="checkbox"
+                        checked={cookiePreferences.functional}
+                        onChange={(e) => setCookiePreferences({...cookiePreferences, functional: e.target.checked})}
+                        className="w-5 h-5 rounded text-blue-600 cursor-pointer"
+                      />
+                    </div>
+                  </div>
+                  
+                  {/* Analytics Cookies */}
+                  <div className="flex items-center justify-between p-4 bg-gray-50 rounded-lg">
+                    <div className="flex-1">
+                      <h4 className="font-medium text-gray-900">Cookie-uri analitice</h4>
+                      <p className="text-sm text-gray-500">Ne ajută să înțelegem cum folosiți aplicația</p>
+                    </div>
+                    <div className="ml-4">
+                      <input
+                        type="checkbox"
+                        checked={cookiePreferences.analytics}
+                        onChange={(e) => setCookiePreferences({...cookiePreferences, analytics: e.target.checked})}
+                        className="w-5 h-5 rounded text-blue-600 cursor-pointer"
+                      />
+                    </div>
+                  </div>
+                </div>
+                
+                <div className="flex gap-3 mt-6">
+                  <button
+                    onClick={rejectOptionalCookies}
+                    className="flex-1 py-3 border border-gray-300 text-gray-700 rounded-lg hover:bg-gray-50 font-medium transition"
+                  >
+                    Doar necesare
+                  </button>
+                  <button
+                    onClick={saveCookiePreferences}
+                    className="flex-1 py-3 bg-blue-600 text-white rounded-lg hover:bg-blue-700 font-medium transition"
+                  >
+                    Salvează preferințe
+                  </button>
+                </div>
+              </div>
+            </div>
+          )}
         </div>
       )}
 
