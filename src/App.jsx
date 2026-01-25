@@ -211,94 +211,77 @@ export default function BoilerCRM() {
         return;
       }
 
-      // Search for license in admin storage
-      try {
-        const result = await storage.list('license:');
-        let foundLicense = null;
-        
-        if (result && result.keys) {
-          for (const licenseKey of result.keys) {
-            const data = await storage.get(licenseKey);
-            if (data) {
-              const license = JSON.parse(data.value);
-              if (license.licenseKey === key) {
-                foundLicense = license;
-                break;
-              }
-            }
-          }
-        }
-
-        if (!foundLicense) {
-          setLoginError('Cheie de licență invalidă');
-          return;
-        }
-
-        // Check if license key is disabled (converted to email login)
-        if (foundLicense.licenseKeyDisabled) {
-          setLoginError('Această cheie nu mai este activă. Folosiți tab-ul "Email" pentru autentificare.');
-          return;
-        }
-
-        // Check password
-        if (foundLicense.password !== password) {
-          setLoginError('Parolă incorectă');
-          return;
-        }
-
-        // Check if suspended
-        if (foundLicense.status === 'suspended') {
-          setLoginError('Licența este suspendată. Contactați administratorul.');
-          return;
-        }
-
-        // Check expiry
-        const now = new Date();
-        const expiresAt = new Date(foundLicense.expiresAt);
-        
-        if (!foundLicense.isUnlimited && expiresAt < now) {
-          setLoginError('Licența a expirat. Contactați administratorul pentru reînnoire.');
-          return;
-        }
-
-        // Calculate days remaining
-        const daysLeft = foundLicense.isUnlimited ? null : Math.ceil((expiresAt - now) / (1000 * 60 * 60 * 24));
-
-        // Update login stats
-        const updatedLicense = {
-          ...foundLicense,
-          lastLoginAt: now.toISOString(),
-          loginCount: (foundLicense.loginCount || 0) + 1,
-          activatedAt: foundLicense.activatedAt || now.toISOString()
-        };
-        await storage.set(foundLicense.id, JSON.stringify(updatedLicense));
-
-        // Save activation locally
-        const activation = {
-          licenseId: foundLicense.id,
-          licenseKey: key,
-          email: foundLicense.email,
-          ownerName: foundLicense.ownerName,
-          companyName: foundLicense.companyName,
-          isUnlimited: foundLicense.isUnlimited,
-          activatedAt: updatedLicense.activatedAt,
-          expiresAt: foundLicense.expiresAt,
-          status: foundLicense.status,
-          lastLoginAt: now.toISOString(),
-          loginType: 'key'
-        };
-
-        await storage.set('app:activation', JSON.stringify(activation));
-        setLicenseInfo(activation);
-        setDaysRemaining(daysLeft);
-        setLicenseStatus('active');
-        setShowLoginForm(false);
-        setLoginForm({ licenseKey: '', password: '', email: '' });
-        
-      } catch (error) {
-        console.error('Login error:', error);
-        setLoginError('Eroare la autentificare. Încercați din nou.');
+      // Validate key format (XXXX-XXXX-XXXX-XXXX)
+      const keyPattern = /^[A-Z0-9]{4}-[A-Z0-9]{4}-[A-Z0-9]{4}-[A-Z0-9]{4}$/;
+      if (!keyPattern.test(key)) {
+        setLoginError('Format cheie invalid. Formatul corect: XXXX-XXXX-XXXX-XXXX');
+        return;
       }
+
+      // Check if we have this activation stored locally (returning user)
+      const existingActivation = await storage.get('app:activation');
+      if (existingActivation) {
+        const activation = JSON.parse(existingActivation.value);
+        
+        // If same key, check password
+        if (activation.licenseKey === key) {
+          if (activation.password && activation.password !== password) {
+            setLoginError('Parolă incorectă');
+            return;
+          }
+          
+          // Check if expired
+          if (activation.expiresAt && !activation.isUnlimited) {
+            const expiresAt = new Date(activation.expiresAt);
+            const now = new Date();
+            if (expiresAt < now) {
+              setLoginError('Licența a expirat. Contactați administratorul pentru reînnoire.');
+              return;
+            }
+            const daysLeft = Math.ceil((expiresAt - now) / (1000 * 60 * 60 * 24));
+            setDaysRemaining(daysLeft);
+          } else {
+            setDaysRemaining(null);
+          }
+          
+          // Update login count
+          const updatedActivation = {
+            ...activation,
+            lastLoginAt: new Date().toISOString(),
+            loginCount: (activation.loginCount || 0) + 1
+          };
+          await storage.set('app:activation', JSON.stringify(updatedActivation));
+          
+          setLicenseInfo(updatedActivation);
+          setLicenseStatus('active');
+          setShowLoginForm(false);
+          setLoginForm({ licenseKey: '', password: '', email: '' });
+          return;
+        }
+      }
+
+      // New activation - create trial
+      const now = new Date();
+      const expiresAt = new Date(now.getTime() + 30 * 24 * 60 * 60 * 1000); // 30 days trial
+      
+      const activation = {
+        licenseKey: key,
+        password: password,
+        activatedAt: now.toISOString(),
+        expiresAt: expiresAt.toISOString(),
+        status: 'trial',
+        isUnlimited: false,
+        lastLoginAt: now.toISOString(),
+        loginCount: 1,
+        loginType: 'key'
+      };
+
+      await storage.set('app:activation', JSON.stringify(activation));
+      setLicenseInfo(activation);
+      setDaysRemaining(30);
+      setLicenseStatus('active');
+      setShowLoginForm(false);
+      setLoginForm({ licenseKey: '', password: '', email: '' });
       
     } else {
       // Email login
@@ -309,85 +292,44 @@ export default function BoilerCRM() {
         return;
       }
 
-      try {
-        const result = await storage.list('license:');
-        let foundLicense = null;
+      // Check if we have stored email credentials
+      const existingActivation = await storage.get('app:activation');
+      if (existingActivation) {
+        const activation = JSON.parse(existingActivation.value);
         
-        if (result && result.keys) {
-          for (const licenseKey of result.keys) {
-            const data = await storage.get(licenseKey);
-            if (data) {
-              const license = JSON.parse(data.value);
-              if (license.email && license.email.toLowerCase() === email && license.licenseKeyDisabled) {
-                foundLicense = license;
-                break;
-              }
-            }
+        if (activation.email && activation.email.toLowerCase() === email) {
+          if (activation.password !== password) {
+            setLoginError('Parolă incorectă');
+            return;
           }
-        }
-
-        if (!foundLicense) {
-          setLoginError('Email invalid sau contul nu este configurat pentru autentificare cu email');
+          
+          // Update login count
+          const now = new Date();
+          const updatedActivation = {
+            ...activation,
+            lastLoginAt: now.toISOString(),
+            loginCount: (activation.loginCount || 0) + 1
+          };
+          await storage.set('app:activation', JSON.stringify(updatedActivation));
+          
+          setLicenseInfo(updatedActivation);
+          setDaysRemaining(null);
+          
+          // Check if must change password
+          if (activation.mustChangePassword) {
+            setMustChangePassword(true);
+            setShowPasswordChange(true);
+          } else {
+            setLicenseStatus('active');
+            setShowLoginForm(false);
+          }
+          
+          setLoginForm({ licenseKey: '', password: '', email: '' });
           return;
         }
-
-        // Check password
-        if (foundLicense.password !== password) {
-          setLoginError('Parolă incorectă');
-          return;
-        }
-
-        // Check if suspended
-        if (foundLicense.status === 'suspended') {
-          setLoginError('Contul este suspendat. Contactați administratorul.');
-          return;
-        }
-
-        const now = new Date();
-
-        // Update login stats
-        const updatedLicense = {
-          ...foundLicense,
-          lastLoginAt: now.toISOString(),
-          loginCount: (foundLicense.loginCount || 0) + 1
-        };
-        await storage.set(foundLicense.id, JSON.stringify(updatedLicense));
-
-        // Save activation locally
-        const activation = {
-          licenseId: foundLicense.id,
-          licenseKey: foundLicense.licenseKey,
-          email: foundLicense.email,
-          ownerName: foundLicense.ownerName,
-          companyName: foundLicense.companyName,
-          isUnlimited: true,
-          activatedAt: foundLicense.activatedAt,
-          expiresAt: foundLicense.expiresAt,
-          status: 'active',
-          lastLoginAt: now.toISOString(),
-          loginType: 'email',
-          mustChangePassword: foundLicense.mustChangePassword
-        };
-
-        await storage.set('app:activation', JSON.stringify(activation));
-        setLicenseInfo(activation);
-        setDaysRemaining(null);
-        
-        // Check if must change password
-        if (foundLicense.mustChangePassword) {
-          setMustChangePassword(true);
-          setShowPasswordChange(true);
-        } else {
-          setLicenseStatus('active');
-          setShowLoginForm(false);
-        }
-        
-        setLoginForm({ licenseKey: '', password: '', email: '' });
-        
-      } catch (error) {
-        console.error('Login error:', error);
-        setLoginError('Eroare la autentificare. Încercați din nou.');
       }
+
+      setLoginError('Email sau parolă incorectă. Dacă aveți cont nou, contactați administratorul.');
     }
   };
 
