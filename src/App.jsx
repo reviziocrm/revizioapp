@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useRef } from 'react';
-import { Plus, Search, Phone, MapPin, Calendar, Wrench, AlertCircle, Clock, Home, Users, CalendarDays, Bell, Filter, ChevronLeft, ChevronRight, X, Settings, Shield, Trash2, Download, Upload, Key, LogOut, MessageCircle } from 'lucide-react';
+import { Plus, Search, Phone, MapPin, Calendar, Wrench, AlertCircle, Clock, Home, Users, CalendarDays, Bell, Filter, ChevronLeft, ChevronRight, X, Settings, Shield, Trash2, Download, Upload, Key, LogOut, MessageCircle, Eye, EyeOff, Mail, Lock } from 'lucide-react';
 
 // Storage wrapper pentru localStorage (înlocuiește storage)
 const storage = {
@@ -32,9 +32,21 @@ export default function BoilerCRM() {
   const [licenseStatus, setLicenseStatus] = useState('checking'); // checking, inactive, active, expired, suspended
   const [licenseInfo, setLicenseInfo] = useState(null);
   const [showLoginForm, setShowLoginForm] = useState(false);
-  const [loginForm, setLoginForm] = useState({ licenseKey: '', password: '' });
+  const [loginForm, setLoginForm] = useState({ licenseKey: '', password: '', email: '' });
   const [loginError, setLoginError] = useState('');
   const [daysRemaining, setDaysRemaining] = useState(null);
+  const [loginTab, setLoginTab] = useState('key'); // 'key' or 'email'
+  
+  // Password change states
+  const [showPasswordChange, setShowPasswordChange] = useState(false);
+  const [mustChangePassword, setMustChangePassword] = useState(false);
+  const [passwordChangeForm, setPasswordChangeForm] = useState({ newPassword: '', confirmPassword: '' });
+  const [passwordChangeError, setPasswordChangeError] = useState('');
+  const [showNewPassword, setShowNewPassword] = useState(false);
+  const [showConfirmPassword, setShowConfirmPassword] = useState(false);
+  
+  // Forgot password modal
+  const [showForgotPassword, setShowForgotPassword] = useState(false);
 
   const [activeTab, setActiveTab] = useState('today');
   const [appointmentsSubTab, setAppointmentsSubTab] = useState('active');
@@ -149,32 +161,319 @@ export default function BoilerCRM() {
   const handleLogin = async () => {
     setLoginError('');
     
-    const key = loginForm.licenseKey.trim().toUpperCase();
     const password = loginForm.password.trim();
 
-    if (!key || !password) {
-      setLoginError('Introduceți cheia de licență și parola');
+    if (loginTab === 'key') {
+      // License key login
+      const key = loginForm.licenseKey.trim().toUpperCase();
+      
+      if (!key || !password) {
+        setLoginError('Introduceți cheia de licență și parola');
+        return;
+      }
+
+      // Search for license in admin storage
+      try {
+        const result = await storage.list('license:');
+        let foundLicense = null;
+        
+        if (result && result.keys) {
+          for (const licenseKey of result.keys) {
+            const data = await storage.get(licenseKey);
+            if (data) {
+              const license = JSON.parse(data.value);
+              if (license.licenseKey === key) {
+                foundLicense = license;
+                break;
+              }
+            }
+          }
+        }
+
+        if (!foundLicense) {
+          setLoginError('Cheie de licență invalidă');
+          return;
+        }
+
+        // Check if license key is disabled (converted to email login)
+        if (foundLicense.licenseKeyDisabled) {
+          setLoginError('Această cheie nu mai este activă. Folosiți tab-ul "Email" pentru autentificare.');
+          return;
+        }
+
+        // Check password
+        if (foundLicense.password !== password) {
+          setLoginError('Parolă incorectă');
+          return;
+        }
+
+        // Check if suspended
+        if (foundLicense.status === 'suspended') {
+          setLoginError('Licența este suspendată. Contactați administratorul.');
+          return;
+        }
+
+        // Check expiry
+        const now = new Date();
+        const expiresAt = new Date(foundLicense.expiresAt);
+        
+        if (!foundLicense.isUnlimited && expiresAt < now) {
+          setLoginError('Licența a expirat. Contactați administratorul pentru reînnoire.');
+          return;
+        }
+
+        // Calculate days remaining
+        const daysLeft = foundLicense.isUnlimited ? null : Math.ceil((expiresAt - now) / (1000 * 60 * 60 * 24));
+
+        // Update login stats
+        const updatedLicense = {
+          ...foundLicense,
+          lastLoginAt: now.toISOString(),
+          loginCount: (foundLicense.loginCount || 0) + 1,
+          activatedAt: foundLicense.activatedAt || now.toISOString()
+        };
+        await storage.set(foundLicense.id, JSON.stringify(updatedLicense));
+
+        // Save activation locally
+        const activation = {
+          licenseId: foundLicense.id,
+          licenseKey: key,
+          email: foundLicense.email,
+          ownerName: foundLicense.ownerName,
+          companyName: foundLicense.companyName,
+          isUnlimited: foundLicense.isUnlimited,
+          activatedAt: updatedLicense.activatedAt,
+          expiresAt: foundLicense.expiresAt,
+          status: foundLicense.status,
+          lastLoginAt: now.toISOString(),
+          loginType: 'key'
+        };
+
+        await storage.set('app:activation', JSON.stringify(activation));
+        setLicenseInfo(activation);
+        setDaysRemaining(daysLeft);
+        setLicenseStatus('active');
+        setShowLoginForm(false);
+        setLoginForm({ licenseKey: '', password: '', email: '' });
+        
+      } catch (error) {
+        console.error('Login error:', error);
+        setLoginError('Eroare la autentificare. Încercați din nou.');
+      }
+      
+    } else {
+      // Email login
+      const email = loginForm.email.trim().toLowerCase();
+      
+      if (!email || !password) {
+        setLoginError('Introduceți emailul și parola');
+        return;
+      }
+
+      try {
+        const result = await storage.list('license:');
+        let foundLicense = null;
+        
+        if (result && result.keys) {
+          for (const licenseKey of result.keys) {
+            const data = await storage.get(licenseKey);
+            if (data) {
+              const license = JSON.parse(data.value);
+              if (license.email && license.email.toLowerCase() === email && license.licenseKeyDisabled) {
+                foundLicense = license;
+                break;
+              }
+            }
+          }
+        }
+
+        if (!foundLicense) {
+          setLoginError('Email invalid sau contul nu este configurat pentru autentificare cu email');
+          return;
+        }
+
+        // Check password
+        if (foundLicense.password !== password) {
+          setLoginError('Parolă incorectă');
+          return;
+        }
+
+        // Check if suspended
+        if (foundLicense.status === 'suspended') {
+          setLoginError('Contul este suspendat. Contactați administratorul.');
+          return;
+        }
+
+        const now = new Date();
+
+        // Update login stats
+        const updatedLicense = {
+          ...foundLicense,
+          lastLoginAt: now.toISOString(),
+          loginCount: (foundLicense.loginCount || 0) + 1
+        };
+        await storage.set(foundLicense.id, JSON.stringify(updatedLicense));
+
+        // Save activation locally
+        const activation = {
+          licenseId: foundLicense.id,
+          licenseKey: foundLicense.licenseKey,
+          email: foundLicense.email,
+          ownerName: foundLicense.ownerName,
+          companyName: foundLicense.companyName,
+          isUnlimited: true,
+          activatedAt: foundLicense.activatedAt,
+          expiresAt: foundLicense.expiresAt,
+          status: 'active',
+          lastLoginAt: now.toISOString(),
+          loginType: 'email',
+          mustChangePassword: foundLicense.mustChangePassword
+        };
+
+        await storage.set('app:activation', JSON.stringify(activation));
+        setLicenseInfo(activation);
+        setDaysRemaining(null);
+        
+        // Check if must change password
+        if (foundLicense.mustChangePassword) {
+          setMustChangePassword(true);
+          setShowPasswordChange(true);
+        } else {
+          setLicenseStatus('active');
+          setShowLoginForm(false);
+        }
+        
+        setLoginForm({ licenseKey: '', password: '', email: '' });
+        
+      } catch (error) {
+        console.error('Login error:', error);
+        setLoginError('Eroare la autentificare. Încercați din nou.');
+      }
+    }
+  };
+
+  const handlePasswordChange = async () => {
+    setPasswordChangeError('');
+    
+    const { newPassword, confirmPassword } = passwordChangeForm;
+    
+    if (!newPassword || !confirmPassword) {
+      setPasswordChangeError('Completați ambele câmpuri');
+      return;
+    }
+    
+    if (newPassword.length < 6) {
+      setPasswordChangeError('Parola trebuie să aibă minim 6 caractere');
+      return;
+    }
+    
+    if (newPassword !== confirmPassword) {
+      setPasswordChangeError('Parolele nu coincid');
       return;
     }
 
-    // In a real app, this would verify against a server
-    // For now, we store the activation locally
-    const now = new Date();
-    const activation = {
-      licenseKey: key,
-      activatedAt: now.toISOString(),
-      expiresAt: new Date(now.getTime() + 30 * 24 * 60 * 60 * 1000).toISOString(), // 30 days trial
-      status: 'trial',
-      lastLoginAt: now.toISOString(),
-      loginCount: 1
-    };
+    try {
+      // Get current license
+      const activationData = await storage.get('app:activation');
+      if (!activationData) {
+        setPasswordChangeError('Eroare: sesiune invalidă');
+        return;
+      }
+      
+      const activation = JSON.parse(activationData.value);
+      const licenseData = await storage.get(activation.licenseId);
+      
+      if (!licenseData) {
+        setPasswordChangeError('Eroare: licență negăsită');
+        return;
+      }
+      
+      const license = JSON.parse(licenseData.value);
+      
+      // Update password
+      const updatedLicense = {
+        ...license,
+        password: newPassword,
+        mustChangePassword: false,
+        passwordChangedAt: new Date().toISOString()
+      };
+      
+      await storage.set(license.id, JSON.stringify(updatedLicense));
+      
+      // Update local activation
+      const updatedActivation = {
+        ...activation,
+        mustChangePassword: false
+      };
+      await storage.set('app:activation', JSON.stringify(updatedActivation));
+      
+      // Complete login
+      setMustChangePassword(false);
+      setShowPasswordChange(false);
+      setPasswordChangeForm({ newPassword: '', confirmPassword: '' });
+      setLicenseStatus('active');
+      setShowLoginForm(false);
+      
+    } catch (error) {
+      console.error('Password change error:', error);
+      setPasswordChangeError('Eroare la schimbarea parolei. Încercați din nou.');
+    }
+  };
 
-    await storage.set('app:activation', JSON.stringify(activation));
-    setLicenseInfo(activation);
-    setDaysRemaining(30);
-    setLicenseStatus('active');
-    setShowLoginForm(false);
-    setLoginForm({ licenseKey: '', password: '' });
+  const handleChangePasswordFromSettings = async () => {
+    setPasswordChangeError('');
+    
+    const { newPassword, confirmPassword } = passwordChangeForm;
+    
+    if (!newPassword || !confirmPassword) {
+      setPasswordChangeError('Completați ambele câmpuri');
+      return;
+    }
+    
+    if (newPassword.length < 6) {
+      setPasswordChangeError('Parola trebuie să aibă minim 6 caractere');
+      return;
+    }
+    
+    if (newPassword !== confirmPassword) {
+      setPasswordChangeError('Parolele nu coincid');
+      return;
+    }
+
+    try {
+      const activationData = await storage.get('app:activation');
+      if (!activationData) {
+        setPasswordChangeError('Eroare: sesiune invalidă');
+        return;
+      }
+      
+      const activation = JSON.parse(activationData.value);
+      const licenseData = await storage.get(activation.licenseId);
+      
+      if (!licenseData) {
+        setPasswordChangeError('Eroare: licență negăsită');
+        return;
+      }
+      
+      const license = JSON.parse(licenseData.value);
+      
+      // Update password
+      const updatedLicense = {
+        ...license,
+        password: newPassword,
+        passwordChangedAt: new Date().toISOString()
+      };
+      
+      await storage.set(license.id, JSON.stringify(updatedLicense));
+      
+      setShowPasswordChange(false);
+      setPasswordChangeForm({ newPassword: '', confirmPassword: '' });
+      alert('Parola a fost schimbată cu succes!');
+      
+    } catch (error) {
+      console.error('Password change error:', error);
+      setPasswordChangeError('Eroare la schimbarea parolei. Încercați din nou.');
+    }
   };
 
   const handleLogout = async () => {
@@ -182,6 +481,8 @@ export default function BoilerCRM() {
     setLicenseStatus('inactive');
     setLicenseInfo(null);
     setShowLoginForm(true);
+    setMustChangePassword(false);
+    setShowPasswordChange(false);
   };
   
   const [customerForm, setCustomerForm] = useState({
@@ -1770,7 +2071,7 @@ Mulțumim! 🙏`;
       )}
 
       {/* License Check - Login Required */}
-      {(licenseStatus === 'inactive' || showLoginForm) && licenseStatus !== 'checking' && (
+      {(licenseStatus === 'inactive' || showLoginForm) && licenseStatus !== 'checking' && !mustChangePassword && (
         <div className="min-h-screen flex items-center justify-center bg-gradient-to-br from-blue-600 to-blue-800 p-4">
           <div className="bg-white rounded-2xl shadow-2xl p-6 sm:p-8 w-full max-w-md">
             <div className="text-center mb-6">
@@ -1796,7 +2097,38 @@ Mulțumim! 🙏`;
                 <text x="175" y="123" fontFamily="Arial, sans-serif" fontSize="28" fill="#f97316">App</text>
                 <text x="175" y="155" fontFamily="Arial, sans-serif" fontSize="14" fill="#64748b">Revizii organizate simplu</text>
               </svg>
-              <p className="text-gray-500 mt-1">Introduceți credențialele pentru a continua</p>
+            </div>
+
+            {/* Login Tabs */}
+            <div className="flex gap-2 mb-6">
+              <button
+                onClick={() => {
+                  setLoginTab('key');
+                  setLoginError('');
+                }}
+                className={`flex-1 py-3 rounded-lg font-medium transition flex items-center justify-center gap-2 ${
+                  loginTab === 'key' 
+                    ? 'bg-blue-600 text-white' 
+                    : 'bg-gray-100 text-gray-600 hover:bg-gray-200'
+                }`}
+              >
+                <Key size={18} />
+                Cheie Licență
+              </button>
+              <button
+                onClick={() => {
+                  setLoginTab('email');
+                  setLoginError('');
+                }}
+                className={`flex-1 py-3 rounded-lg font-medium transition flex items-center justify-center gap-2 ${
+                  loginTab === 'email' 
+                    ? 'bg-blue-600 text-white' 
+                    : 'bg-gray-100 text-gray-600 hover:bg-gray-200'
+                }`}
+              >
+                <Mail size={18} />
+                Email
+              </button>
             </div>
 
             {loginError && (
@@ -1806,38 +2138,193 @@ Mulțumim! 🙏`;
             )}
 
             <div className="space-y-4">
-              <div>
-                <label className="block text-sm font-medium text-gray-700 mb-2">Cheie Licență</label>
-                <input
-                  type="text"
-                  value={loginForm.licenseKey}
-                  onChange={(e) => setLoginForm({...loginForm, licenseKey: e.target.value.toUpperCase()})}
-                  className="w-full px-4 py-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500 text-center font-mono text-lg tracking-wider"
-                  placeholder="XXXX-XXXX-XXXX-XXXX"
-                  maxLength={19}
-                />
-              </div>
-              <div>
-                <label className="block text-sm font-medium text-gray-700 mb-2">Parolă</label>
-                <input
-                  type="password"
-                  value={loginForm.password}
-                  onChange={(e) => setLoginForm({...loginForm, password: e.target.value})}
-                  className="w-full px-4 py-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
-                  placeholder="••••••••••••"
-                />
-              </div>
+              {loginTab === 'key' ? (
+                /* License Key Login */
+                <>
+                  <div>
+                    <label className="block text-sm font-medium text-gray-700 mb-2">Cheie Licență</label>
+                    <input
+                      type="text"
+                      value={loginForm.licenseKey}
+                      onChange={(e) => setLoginForm({...loginForm, licenseKey: e.target.value.toUpperCase()})}
+                      className="w-full px-4 py-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500 text-center font-mono text-lg tracking-wider"
+                      placeholder="XXXX-XXXX-XXXX-XXXX"
+                      maxLength={19}
+                    />
+                  </div>
+                  <div>
+                    <label className="block text-sm font-medium text-gray-700 mb-2">Parolă</label>
+                    <input
+                      type="password"
+                      value={loginForm.password}
+                      onChange={(e) => setLoginForm({...loginForm, password: e.target.value})}
+                      className="w-full px-4 py-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
+                      placeholder="••••••••••••"
+                    />
+                  </div>
+                </>
+              ) : (
+                /* Email Login */
+                <>
+                  <div>
+                    <label className="block text-sm font-medium text-gray-700 mb-2">Email</label>
+                    <input
+                      type="email"
+                      value={loginForm.email}
+                      onChange={(e) => setLoginForm({...loginForm, email: e.target.value})}
+                      className="w-full px-4 py-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
+                      placeholder="email@exemplu.ro"
+                    />
+                  </div>
+                  <div>
+                    <label className="block text-sm font-medium text-gray-700 mb-2">Parolă</label>
+                    <input
+                      type="password"
+                      value={loginForm.password}
+                      onChange={(e) => setLoginForm({...loginForm, password: e.target.value})}
+                      className="w-full px-4 py-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
+                      placeholder="••••••••••••"
+                    />
+                  </div>
+                </>
+              )}
+              
               <button
                 onClick={handleLogin}
                 className="w-full py-3 bg-blue-600 text-white rounded-lg hover:bg-blue-700 font-medium text-lg transition min-h-[48px]"
               >
-                Activare
+                Autentificare
               </button>
             </div>
 
-            <p className="text-center text-sm text-gray-500 mt-6">
-              Nu aveți o licență? Contactați administratorul.
+            <div className="mt-6 text-center">
+              <button
+                onClick={() => setShowForgotPassword(true)}
+                className="text-sm text-blue-600 hover:text-blue-800 underline"
+              >
+                Am uitat parola
+              </button>
+            </div>
+
+            <p className="text-center text-sm text-gray-500 mt-4">
+              Nu aveți cont? Contactați administratorul.
             </p>
+          </div>
+        </div>
+      )}
+
+      {/* Forgot Password Modal */}
+      {showForgotPassword && (
+        <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50 p-4">
+          <div className="bg-white rounded-2xl shadow-2xl p-6 sm:p-8 w-full max-w-md">
+            <div className="flex justify-between items-center mb-4">
+              <h3 className="text-xl font-semibold text-gray-900">Am uitat parola</h3>
+              <button 
+                onClick={() => setShowForgotPassword(false)} 
+                className="text-gray-500 hover:text-gray-700 p-2"
+              >
+                <X size={24} />
+              </button>
+            </div>
+            
+            <div className="space-y-4">
+              <div className="bg-blue-50 border border-blue-200 rounded-lg p-4">
+                <p className="text-sm text-blue-800">
+                  Pentru resetarea parolei, vă rugăm să contactați administratorul aplicației.
+                </p>
+              </div>
+              
+              <div className="bg-gray-50 rounded-lg p-4">
+                <p className="text-sm text-gray-600 mb-3">
+                  Trimiteți un mesaj WhatsApp pentru asistență rapidă:
+                </p>
+                <button
+                  onClick={() => {
+                    const message = encodeURIComponent('Bună ziua! Am uitat parola pentru RevizioApp și am nevoie de resetare. Emailul/Cheia mea este: ');
+                    window.open(`https://wa.me/40723533462?text=${message}`, '_blank');
+                  }}
+                  className="w-full flex items-center justify-center gap-2 py-3 bg-green-600 text-white rounded-lg hover:bg-green-700 font-medium transition"
+                >
+                  <MessageCircle size={20} />
+                  Contactează pe WhatsApp
+                </button>
+              </div>
+              
+              <button
+                onClick={() => setShowForgotPassword(false)}
+                className="w-full py-3 border border-gray-300 text-gray-700 rounded-lg hover:bg-gray-50 font-medium transition"
+              >
+                Închide
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Must Change Password Screen */}
+      {mustChangePassword && showPasswordChange && (
+        <div className="min-h-screen flex items-center justify-center bg-gradient-to-br from-orange-500 to-orange-700 p-4">
+          <div className="bg-white rounded-2xl shadow-2xl p-6 sm:p-8 w-full max-w-md">
+            <div className="text-center mb-6">
+              <div className="w-16 h-16 bg-orange-100 rounded-full flex items-center justify-center mx-auto mb-4">
+                <Lock className="text-orange-600" size={32} />
+              </div>
+              <h2 className="text-2xl font-bold text-gray-900">Schimbare Parolă Obligatorie</h2>
+              <p className="text-gray-500 mt-2">Vă rugăm să setați o parolă nouă pentru contul dvs.</p>
+            </div>
+
+            {passwordChangeError && (
+              <div className="bg-red-50 border border-red-200 text-red-700 px-4 py-3 rounded-lg mb-4 text-sm">
+                {passwordChangeError}
+              </div>
+            )}
+
+            <div className="space-y-4">
+              <div>
+                <label className="block text-sm font-medium text-gray-700 mb-2">Parolă Nouă</label>
+                <div className="relative">
+                  <input
+                    type={showNewPassword ? 'text' : 'password'}
+                    value={passwordChangeForm.newPassword}
+                    onChange={(e) => setPasswordChangeForm({...passwordChangeForm, newPassword: e.target.value})}
+                    className="w-full px-4 py-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-orange-500 focus:border-orange-500 pr-12"
+                    placeholder="Minim 6 caractere"
+                  />
+                  <button
+                    type="button"
+                    onClick={() => setShowNewPassword(!showNewPassword)}
+                    className="absolute right-3 top-1/2 transform -translate-y-1/2 text-gray-400 hover:text-gray-600"
+                  >
+                    {showNewPassword ? <EyeOff size={20} /> : <Eye size={20} />}
+                  </button>
+                </div>
+              </div>
+              <div>
+                <label className="block text-sm font-medium text-gray-700 mb-2">Confirmă Parola</label>
+                <div className="relative">
+                  <input
+                    type={showConfirmPassword ? 'text' : 'password'}
+                    value={passwordChangeForm.confirmPassword}
+                    onChange={(e) => setPasswordChangeForm({...passwordChangeForm, confirmPassword: e.target.value})}
+                    className="w-full px-4 py-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-orange-500 focus:border-orange-500 pr-12"
+                    placeholder="Repetă parola nouă"
+                  />
+                  <button
+                    type="button"
+                    onClick={() => setShowConfirmPassword(!showConfirmPassword)}
+                    className="absolute right-3 top-1/2 transform -translate-y-1/2 text-gray-400 hover:text-gray-600"
+                  >
+                    {showConfirmPassword ? <EyeOff size={20} /> : <Eye size={20} />}
+                  </button>
+                </div>
+              </div>
+              <button
+                onClick={handlePasswordChange}
+                className="w-full py-3 bg-orange-600 text-white rounded-lg hover:bg-orange-700 font-medium text-lg transition min-h-[48px]"
+              >
+                Salvează Parola Nouă
+              </button>
+            </div>
           </div>
         </div>
       )}
@@ -2151,6 +2638,96 @@ Mulțumim! 🙏`;
               >
                 Confirmă
               </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Change Password Modal (from settings, not mandatory) */}
+      {showPasswordChange && !mustChangePassword && licenseStatus === 'active' && (
+        <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50 p-4">
+          <div className="bg-white rounded-2xl shadow-2xl p-6 sm:p-8 w-full max-w-md">
+            <div className="flex justify-between items-center mb-4">
+              <div className="flex items-center gap-2">
+                <Lock className="text-blue-600" size={24} />
+                <h3 className="text-xl font-semibold text-gray-900">Schimbă Parola</h3>
+              </div>
+              <button 
+                onClick={() => {
+                  setShowPasswordChange(false);
+                  setPasswordChangeForm({ newPassword: '', confirmPassword: '' });
+                  setPasswordChangeError('');
+                }} 
+                className="text-gray-500 hover:text-gray-700 p-2"
+              >
+                <X size={24} />
+              </button>
+            </div>
+
+            {passwordChangeError && (
+              <div className="bg-red-50 border border-red-200 text-red-700 px-4 py-3 rounded-lg mb-4 text-sm">
+                {passwordChangeError}
+              </div>
+            )}
+
+            <div className="space-y-4">
+              <div>
+                <label className="block text-sm font-medium text-gray-700 mb-2">Parolă Nouă</label>
+                <div className="relative">
+                  <input
+                    type={showNewPassword ? 'text' : 'password'}
+                    value={passwordChangeForm.newPassword}
+                    onChange={(e) => setPasswordChangeForm({...passwordChangeForm, newPassword: e.target.value})}
+                    className="w-full px-4 py-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500 pr-12"
+                    placeholder="Minim 6 caractere"
+                  />
+                  <button
+                    type="button"
+                    onClick={() => setShowNewPassword(!showNewPassword)}
+                    className="absolute right-3 top-1/2 transform -translate-y-1/2 text-gray-400 hover:text-gray-600"
+                  >
+                    {showNewPassword ? <EyeOff size={20} /> : <Eye size={20} />}
+                  </button>
+                </div>
+              </div>
+              <div>
+                <label className="block text-sm font-medium text-gray-700 mb-2">Confirmă Parola</label>
+                <div className="relative">
+                  <input
+                    type={showConfirmPassword ? 'text' : 'password'}
+                    value={passwordChangeForm.confirmPassword}
+                    onChange={(e) => setPasswordChangeForm({...passwordChangeForm, confirmPassword: e.target.value})}
+                    className="w-full px-4 py-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500 pr-12"
+                    placeholder="Repetă parola nouă"
+                  />
+                  <button
+                    type="button"
+                    onClick={() => setShowConfirmPassword(!showConfirmPassword)}
+                    className="absolute right-3 top-1/2 transform -translate-y-1/2 text-gray-400 hover:text-gray-600"
+                  >
+                    {showConfirmPassword ? <EyeOff size={20} /> : <Eye size={20} />}
+                  </button>
+                </div>
+              </div>
+              
+              <div className="flex gap-3 pt-2">
+                <button
+                  onClick={() => {
+                    setShowPasswordChange(false);
+                    setPasswordChangeForm({ newPassword: '', confirmPassword: '' });
+                    setPasswordChangeError('');
+                  }}
+                  className="flex-1 py-3 border border-gray-300 text-gray-700 rounded-lg hover:bg-gray-50 font-medium transition"
+                >
+                  Anulare
+                </button>
+                <button
+                  onClick={handleChangePasswordFromSettings}
+                  className="flex-1 py-3 bg-blue-600 text-white rounded-lg hover:bg-blue-700 font-medium transition"
+                >
+                  Salvează
+                </button>
+              </div>
             </div>
           </div>
         </div>
@@ -2605,6 +3182,18 @@ Mulțumim! 🙏`;
               </div>
             </div>
             <div className="flex items-center gap-2">
+              <button
+                onClick={() => {
+                  setPasswordChangeForm({ newPassword: '', confirmPassword: '' });
+                  setPasswordChangeError('');
+                  setShowPasswordChange(true);
+                }}
+                className="flex items-center gap-2 px-3 py-2 text-gray-600 hover:text-gray-800 hover:bg-gray-100 rounded-lg transition min-h-[44px]"
+                title="Schimbă parola"
+              >
+                <Lock size={20} />
+                <span className="hidden sm:inline text-sm">Parolă</span>
+              </button>
               <button
                 onClick={openGdprModal}
                 className="flex items-center gap-2 px-3 py-2 text-gray-600 hover:text-gray-800 hover:bg-gray-100 rounded-lg transition min-h-[44px]"
