@@ -420,7 +420,7 @@ export default function BoilerCRM() {
     }
 
     try {
-      // Get current license
+      // Get current activation
       const activationData = await storage.get('app:activation');
       if (!activationData) {
         setPasswordChangeError('Eroare: sesiune invalidă');
@@ -428,31 +428,19 @@ export default function BoilerCRM() {
       }
       
       const activation = JSON.parse(activationData.value);
-      const licenseData = await storage.get(activation.licenseId);
       
-      if (!licenseData) {
-        setPasswordChangeError('Eroare: licență negăsită');
-        return;
-      }
-      
-      const license = JSON.parse(licenseData.value);
-      
-      // Update password
-      const updatedLicense = {
-        ...license,
+      // Update activation with new password
+      const updatedActivation = {
+        ...activation,
         password: newPassword,
         mustChangePassword: false,
         passwordChangedAt: new Date().toISOString()
       };
       
-      await storage.set(license.id, JSON.stringify(updatedLicense));
-      
-      // Update local activation
-      const updatedActivation = {
-        ...activation,
-        mustChangePassword: false
-      };
       await storage.set('app:activation', JSON.stringify(updatedActivation));
+      
+      // Update licenseInfo state
+      setLicenseInfo(updatedActivation);
       
       // Complete login
       setMustChangePassword(false);
