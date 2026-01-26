@@ -367,12 +367,17 @@ export default function BoilerCRM() {
           
           setLoginForm({ licenseKey: '', password: '', email: '' });
           return;
+        } else {
+          // Different email than stored - this is a new account trying to activate
+          // But we already have an activation, so reject or allow override?
+          // For now, allow new activation (different user on same device)
         }
       }
 
       // NEW PAID ACCOUNT ACTIVATION (Production only)
-      // If user enters email + password and it works, create unlimited account
-      // This allows new paid users to activate their account
+      // Only reaches here if:
+      // 1. No existing activation, OR
+      // 2. Existing activation has different email (new user on same device)
       
       const now = new Date();
       const newActivation = {
