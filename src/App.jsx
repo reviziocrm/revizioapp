@@ -1,6 +1,88 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { Plus, Search, Phone, MapPin, Calendar, Wrench, AlertCircle, Clock, Home, Users, CalendarDays, Bell, Filter, ChevronLeft, ChevronRight, X, Settings, Shield, Trash2, Download, Upload, Key, LogOut, MessageCircle, Eye, EyeOff, Mail, Lock, FlaskConical } from 'lucide-react';
 
+// Supabase configuration
+const SUPABASE_URL = 'https://syfqurfdcveradtzvove.supabase.co';
+const SUPABASE_ANON_KEY = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InN5ZnF1cmZkY3ZlcmFkdHp2b3ZlIiwicm9sZSI6ImFub24iLCJpYXQiOjE3Njk0NTIwMjcsImV4cCI6MjA4NTAyODAyN30.lMzdAjs04bVcULW-Ar9cZEenU0dW7FyoROqMiZG5ax8';
+
+// Generate unique device ID
+const getDeviceId = () => {
+  let deviceId = localStorage.getItem('app:deviceId');
+  if (!deviceId) {
+    deviceId = 'dev_' + Date.now() + '_' + Math.random().toString(36).substring(2, 15);
+    localStorage.setItem('app:deviceId', deviceId);
+  }
+  return deviceId;
+};
+
+// Supabase device session functions
+const deviceSession = {
+  async check(email) {
+    try {
+      const response = await fetch(
+        `${SUPABASE_URL}/rest/v1/device_sessions?email=eq.${encodeURIComponent(email)}&select=*`,
+        {
+          headers: {
+            'apikey': SUPABASE_ANON_KEY,
+            'Authorization': `Bearer ${SUPABASE_ANON_KEY}`
+          }
+        }
+      );
+      const data = await response.json();
+      return data.length > 0 ? data[0] : null;
+    } catch (error) {
+      console.error('Error checking device session:', error);
+      return null;
+    }
+  },
+  
+  async register(email, deviceId) {
+    try {
+      const response = await fetch(
+        `${SUPABASE_URL}/rest/v1/device_sessions`,
+        {
+          method: 'POST',
+          headers: {
+            'apikey': SUPABASE_ANON_KEY,
+            'Authorization': `Bearer ${SUPABASE_ANON_KEY}`,
+            'Content-Type': 'application/json',
+            'Prefer': 'return=representation'
+          },
+          body: JSON.stringify({
+            email: email,
+            device_id: deviceId
+          })
+        }
+      );
+      return response.ok;
+    } catch (error) {
+      console.error('Error registering device:', error);
+      return false;
+    }
+  },
+  
+  async updateLastLogin(email) {
+    try {
+      await fetch(
+        `${SUPABASE_URL}/rest/v1/device_sessions?email=eq.${encodeURIComponent(email)}`,
+        {
+          method: 'PATCH',
+          headers: {
+            'apikey': SUPABASE_ANON_KEY,
+            'Authorization': `Bearer ${SUPABASE_ANON_KEY}`,
+            'Content-Type': 'application/json'
+          },
+          body: JSON.stringify({
+            last_login_at: new Date().toISOString()
+          })
+        }
+      );
+    } catch (error) {
+      console.error('Error updating last login:', error);
+    }
+  }
+};
+
 // Storage wrapper pentru localStorage (înlocuiește storage)
 const storage = {
   async get(key) {
@@ -328,6 +410,22 @@ export default function BoilerCRM() {
         return;
       }
 
+      // Get current device ID
+      const currentDeviceId = getDeviceId();
+      
+      // Check device session in Supabase
+      const existingSession = await deviceSession.check(email);
+      
+      if (existingSession) {
+        // Email already registered - check if same device
+        if (existingSession.device_id !== currentDeviceId) {
+          setLoginError('Acest cont este deja activ pe alt dispozitiv. Contactați administratorul pentru a reseta accesul.');
+          return;
+        }
+        // Same device - update last login
+        await deviceSession.updateLastLogin(email);
+      }
+
       // Check if we have stored activation
       const existingActivation = await storage.get('app:activation');
       
@@ -376,6 +474,15 @@ export default function BoilerCRM() {
       // Only reaches here if:
       // 1. No existing activation, OR
       // 2. Existing activation has different email (new user on same device)
+      
+      // Register device in Supabase (if not already registered)
+      if (!existingSession) {
+        const registered = await deviceSession.register(email, currentDeviceId);
+        if (!registered) {
+          setLoginError('Eroare la înregistrarea dispozitivului. Încercați din nou.');
+          return;
+        }
+      }
       
       const now = new Date();
       const newActivation = {
