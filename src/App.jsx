@@ -210,15 +210,13 @@ export default function BoilerCRM() {
         setLicenseStatus('suspended');
       } else if (days < 0 && !activation.isUnlimited) {
         setLicenseStatus('expired');
+      } else if (activation.mustChangePassword) {
+        // Must change password before accessing app
+        setMustChangePassword(true);
+        setShowPasswordChange(true);
+        setLicenseStatus('inactive'); // Keep as inactive until password changed
       } else {
         setLicenseStatus('active');
-        // Update last login
-        const updatedActivation = {
-          ...activation,
-          lastLoginAt: now.toISOString(),
-          loginCount: (activation.loginCount || 0) + 1
-        };
-        await storage.set('app:activation', JSON.stringify(updatedActivation));
       }
     } catch (error) {
       console.error('Error checking license:', error);
