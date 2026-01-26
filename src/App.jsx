@@ -354,8 +354,8 @@ export default function BoilerCRM() {
           setLicenseInfo(updatedActivation);
           setDaysRemaining(null);
           
-          // Check if must change password
-          if (activation.mustChangePassword) {
+          // Check if must change password (use updatedActivation which has latest data)
+          if (updatedActivation.mustChangePassword) {
             setMustChangePassword(true);
             setShowPasswordChange(true);
           } else {
@@ -515,7 +515,8 @@ export default function BoilerCRM() {
   };
 
   const handleLogout = async () => {
-    await storage.delete('app:activation');
+    // Don't delete activation - just mark as logged out
+    // This preserves the password and mustChangePassword state
     setLicenseStatus('inactive');
     setLicenseInfo(null);
     setShowLoginForm(true);
