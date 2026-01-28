@@ -142,7 +142,401 @@ const ENV_CONFIG = {
 };
 const ENV = isDemo ? ENV_CONFIG.demo : ENV_CONFIG.production;
 
-export default function BoilerCRM() {
+// ==================== BOOKING PAGE COMPONENT ====================
+function BookingPage({ bookingCode }) {
+  const [operatorEmail, setOperatorEmail] = useState(null);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState(false);
+  const [selectedDate, setSelectedDate] = useState(null);
+  const [selectedHour, setSelectedHour] = useState('09');
+  const [selectedMinute, setSelectedMinute] = useState('00');
+  const [currentMonth, setCurrentMonth] = useState(new Date());
+  const [formData, setFormData] = useState({ name: '', phone: '', address: '', serviceType: '' });
+  const [submitted, setSubmitted] = useState(false);
+  const [submitting, setSubmitting] = useState(false);
+
+  // Validate booking code on mount
+  useEffect(() => {
+    async function validate() {
+      try {
+        const response = await fetch(
+          `${SUPABASE_URL}/rest/v1/operator_availability?booking_code=eq.${bookingCode}&select=operator_email`,
+          { headers: { 'apikey': SUPABASE_ANON_KEY, 'Authorization': `Bearer ${SUPABASE_ANON_KEY}` }}
+        );
+        const data = await response.json();
+        if (data.length > 0) {
+          setOperatorEmail(data[0].operator_email);
+        } else {
+          setError(true);
+        }
+      } catch (e) {
+        setError(true);
+      }
+      setLoading(false);
+    }
+    if (bookingCode && bookingCode.startsWith('BK')) {
+      validate();
+    } else {
+      setError(true);
+      setLoading(false);
+    }
+  }, [bookingCode]);
+
+  // Submit booking
+  const submitBooking = async () => {
+    if (!formData.name || !formData.phone || !formData.address || !formData.serviceType) {
+      alert('Vă rugăm completați toate câmpurile obligatorii.');
+      return;
+    }
+    
+    setSubmitting(true);
+    
+    const booking = {
+      operator_email: operatorEmail,
+      booking_code: bookingCode,
+      client_name: formData.name,
+      client_phone: formData.phone,
+      client_address: formData.address,
+      service_type: formData.serviceType,
+      booking_date: selectedDate.toISOString().split('T')[0],
+      booking_time: `${selectedHour}:${selectedMinute}:00`,
+      status: 'pending',
+      notified_in_app: false,
+      notified_email: false
+    };
+    
+    try {
+      const response = await fetch(`${SUPABASE_URL}/rest/v1/bookings`, {
+        method: 'POST',
+        headers: {
+          'apikey': SUPABASE_ANON_KEY,
+          'Authorization': `Bearer ${SUPABASE_ANON_KEY}`,
+          'Content-Type': 'application/json',
+          'Prefer': 'return=representation'
+        },
+        body: JSON.stringify(booking)
+      });
+      
+      if (response.ok) {
+        // Try to send email notification
+        try {
+          await fetch(`${SUPABASE_URL}/functions/v1/send-booking-email`, {
+            method: 'POST',
+            headers: {
+              'Content-Type': 'application/json',
+              'Authorization': `Bearer ${SUPABASE_ANON_KEY}`
+            },
+            body: JSON.stringify({
+              to: operatorEmail,
+              clientName: formData.name,
+              clientPhone: formData.phone,
+              clientAddress: formData.address,
+              bookingDate: selectedDate.toLocaleDateString('ro-RO'),
+              bookingTime: `${selectedHour}:${selectedMinute}`,
+              serviceType: formData.serviceType
+            })
+          });
+        } catch (e) {
+          console.log('Email notification error:', e);
+        }
+        setSubmitted(true);
+      } else {
+        alert('Eroare la trimitere. Încercați din nou.');
+      }
+    } catch (e) {
+      alert('Eroare la trimitere. Încercați din nou.');
+    }
+    setSubmitting(false);
+  };
+
+  // Loading state
+  if (loading) {
+    return (
+      <div className="min-h-screen bg-gradient-to-br from-blue-50 via-indigo-50 to-purple-50 flex items-center justify-center p-4">
+        <div className="text-center">
+          <div className="animate-spin w-8 h-8 border-4 border-blue-600 border-t-transparent rounded-full mx-auto mb-4"></div>
+          <p className="text-gray-600">Se încarcă...</p>
+        </div>
+      </div>
+    );
+  }
+
+  // Error state
+  if (error) {
+    return (
+      <div className="min-h-screen bg-gradient-to-br from-blue-50 via-indigo-50 to-purple-50 flex items-center justify-center p-4">
+        <div className="bg-white rounded-2xl shadow-xl p-8 max-w-md mx-auto text-center">
+          <div className="w-16 h-16 bg-red-100 rounded-full flex items-center justify-center mx-auto mb-4">
+            <X className="w-8 h-8 text-red-500" />
+          </div>
+          <h1 className="text-xl font-bold text-gray-800 mb-2">Link invalid</h1>
+          <p className="text-gray-600">Acest link de programare nu este valid sau a expirat.</p>
+        </div>
+      </div>
+    );
+  }
+
+  // Success state
+  if (submitted) {
+    const dateStr = selectedDate.toLocaleDateString('ro-RO', { weekday: 'long', day: 'numeric', month: 'long' });
+    return (
+      <div className="min-h-screen bg-gradient-to-br from-blue-50 via-indigo-50 to-purple-50 flex items-center justify-center p-4">
+        <div className="bg-white rounded-2xl shadow-xl p-8 max-w-md mx-auto text-center">
+          <div className="w-20 h-20 bg-green-100 rounded-full flex items-center justify-center mx-auto mb-4">
+            <Check className="w-10 h-10 text-green-500" />
+          </div>
+          <h1 className="text-2xl font-bold text-gray-800 mb-2">Cerere trimisă!</h1>
+          <p className="text-gray-600 mb-6">Veți fi contactat în curând pentru confirmare.</p>
+          <div className="bg-gray-50 rounded-lg p-4 text-left space-y-1">
+            <p className="text-sm text-gray-600"><strong>Data:</strong> {dateStr}</p>
+            <p className="text-sm text-gray-600"><strong>Ora:</strong> {selectedHour}:{selectedMinute}</p>
+            <p className="text-sm text-gray-600"><strong>Serviciu:</strong> {formData.serviceType}</p>
+          </div>
+          <p className="text-gray-400 text-sm mt-6">Puteți închide această pagină.</p>
+        </div>
+      </div>
+    );
+  }
+
+  // Calendar render
+  const renderCalendar = () => {
+    const year = currentMonth.getFullYear();
+    const month = currentMonth.getMonth();
+    const firstDay = new Date(year, month, 1);
+    const lastDay = new Date(year, month + 1, 0);
+    const startDay = firstDay.getDay() || 7;
+    const today = new Date();
+    today.setHours(0, 0, 0, 0);
+    
+    const months = ['Ianuarie', 'Februarie', 'Martie', 'Aprilie', 'Mai', 'Iunie', 
+                    'Iulie', 'August', 'Septembrie', 'Octombrie', 'Noiembrie', 'Decembrie'];
+    
+    const days = [];
+    
+    // Empty cells
+    for (let i = 1; i < startDay; i++) {
+      days.push(<div key={`empty-${i}`} className="p-2"></div>);
+    }
+    
+    // Days
+    for (let day = 1; day <= lastDay.getDate(); day++) {
+      const date = new Date(year, month, day);
+      const isPast = date < today;
+      const isSelected = selectedDate && date.toDateString() === selectedDate.toDateString();
+      const isWeekend = date.getDay() === 0 || date.getDay() === 6;
+      
+      let cls = 'p-2 rounded-lg text-center transition-all ';
+      if (isPast) {
+        cls += 'text-gray-300 cursor-not-allowed';
+      } else if (isSelected) {
+        cls += 'bg-blue-600 text-white font-semibold cursor-pointer';
+      } else if (isWeekend) {
+        cls += 'text-gray-400 hover:bg-gray-100 cursor-pointer';
+      } else {
+        cls += 'hover:bg-blue-100 cursor-pointer';
+      }
+      
+      days.push(
+        <div 
+          key={day} 
+          className={cls} 
+          onClick={() => !isPast && setSelectedDate(date)}
+        >
+          {day}
+        </div>
+      );
+    }
+    
+    return (
+      <div>
+        <div className="flex justify-between items-center mb-4">
+          <button 
+            onClick={() => setCurrentMonth(new Date(currentMonth.getFullYear(), currentMonth.getMonth() - 1))}
+            className="p-2 hover:bg-gray-100 rounded-lg"
+          >
+            <ChevronLeft size={20} />
+          </button>
+          <h3 className="font-semibold text-lg">{months[month]} {year}</h3>
+          <button 
+            onClick={() => setCurrentMonth(new Date(currentMonth.getFullYear(), currentMonth.getMonth() + 1))}
+            className="p-2 hover:bg-gray-100 rounded-lg"
+          >
+            <ChevronRight size={20} />
+          </button>
+        </div>
+        <div className="grid grid-cols-7 gap-1 text-center text-sm mb-2">
+          {['Lu', 'Ma', 'Mi', 'Jo', 'Vi', 'Sâ', 'Du'].map(d => (
+            <div key={d} className="font-medium text-gray-500 py-2">{d}</div>
+          ))}
+        </div>
+        <div className="grid grid-cols-7 gap-1">
+          {days}
+        </div>
+      </div>
+    );
+  };
+
+  // Time picker render
+  const renderTimePicker = () => {
+    if (!selectedDate) return null;
+    
+    const hours = [];
+    for (let h = 7; h <= 20; h++) {
+      const val = h.toString().padStart(2, '0');
+      hours.push(
+        <button
+          key={h}
+          onClick={() => setSelectedHour(val)}
+          className={`p-2 rounded-lg transition-all ${selectedHour === val ? 'bg-blue-600 text-white' : 'bg-gray-100 hover:bg-blue-100'}`}
+        >
+          {val}
+        </button>
+      );
+    }
+    
+    const minutes = ['00', '15', '30', '45'].map(m => (
+      <button
+        key={m}
+        onClick={() => setSelectedMinute(m)}
+        className={`p-2 rounded-lg transition-all ${selectedMinute === m ? 'bg-blue-600 text-white' : 'bg-gray-100 hover:bg-blue-100'}`}
+      >
+        {m}
+      </button>
+    ));
+    
+    return (
+      <div className="mt-4 pt-4 border-t">
+        <p className="font-medium text-gray-700 mb-3">Selectați ora:</p>
+        <div className="flex gap-4">
+          <div className="flex-1">
+            <p className="text-sm text-gray-500 mb-2">Ora</p>
+            <div className="grid grid-cols-5 gap-1">{hours}</div>
+          </div>
+          <div className="w-24">
+            <p className="text-sm text-gray-500 mb-2">Minute</p>
+            <div className="grid grid-cols-2 gap-1">{minutes}</div>
+          </div>
+        </div>
+      </div>
+    );
+  };
+
+  const dateStr = selectedDate ? selectedDate.toLocaleDateString('ro-RO', { weekday: 'long', day: 'numeric', month: 'long', year: 'numeric' }) : '';
+
+  return (
+    <div className="min-h-screen bg-gradient-to-br from-blue-50 via-indigo-50 to-purple-50 flex items-center justify-center p-4">
+      <div className="bg-white rounded-2xl shadow-xl p-6 max-w-md mx-auto w-full">
+        {/* Header */}
+        <div className="text-center mb-6">
+          <div className="w-14 h-14 bg-blue-600 rounded-full flex items-center justify-center mx-auto mb-3">
+            <Calendar className="w-7 h-7 text-white" />
+          </div>
+          <h1 className="text-xl font-bold text-gray-800">Programare Revizie</h1>
+          <p className="text-gray-500 text-sm">Alegeți data și ora convenabilă</p>
+        </div>
+        
+        {/* Calendar */}
+        <div className="mb-6">
+          {renderCalendar()}
+          {renderTimePicker()}
+        </div>
+        
+        {selectedDate ? (
+          <>
+            {/* Selected summary */}
+            <div className="bg-blue-50 rounded-lg p-3 mb-4 text-center">
+              <p className="text-blue-800 font-medium">{dateStr}</p>
+              <p className="text-blue-600 text-lg font-bold">{selectedHour}:{selectedMinute}</p>
+            </div>
+            
+            {/* Form */}
+            <div className="space-y-4">
+              <div>
+                <label className="block text-sm font-medium text-gray-700 mb-1">Nume complet *</label>
+                <input
+                  type="text"
+                  value={formData.name}
+                  onChange={(e) => setFormData(prev => ({ ...prev, name: e.target.value }))}
+                  className="w-full px-4 py-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500 text-base"
+                  placeholder="Ex: Ion Popescu"
+                />
+              </div>
+              
+              <div>
+                <label className="block text-sm font-medium text-gray-700 mb-1">Telefon *</label>
+                <input
+                  type="tel"
+                  value={formData.phone}
+                  onChange={(e) => setFormData(prev => ({ ...prev, phone: e.target.value }))}
+                  className="w-full px-4 py-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500 text-base"
+                  placeholder="Ex: 0722 123 456"
+                />
+              </div>
+              
+              <div>
+                <label className="block text-sm font-medium text-gray-700 mb-1">Adresa *</label>
+                <input
+                  type="text"
+                  value={formData.address}
+                  onChange={(e) => setFormData(prev => ({ ...prev, address: e.target.value }))}
+                  className="w-full px-4 py-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500 text-base"
+                  placeholder="Ex: Str. Exemplu nr. 10, Bloc A, Oraș"
+                />
+              </div>
+              
+              <div>
+                <label className="block text-sm font-medium text-gray-700 mb-1">Tip serviciu *</label>
+                <select
+                  value={formData.serviceType}
+                  onChange={(e) => setFormData(prev => ({ ...prev, serviceType: e.target.value }))}
+                  className="w-full px-4 py-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500 text-base"
+                >
+                  <option value="">Selectează</option>
+                  <option value="Verificare/Revizie Instalație Gaze">Verificare/Revizie Instalație Gaze</option>
+                  <option value="Pachet Verificare/Revizie cu Centrală">Pachet Verificare/Revizie cu Centrală</option>
+                  <option value="Reluare Furnizare Gaze (gaz oprit)">Reluare Furnizare Gaze (gaz oprit)</option>
+                  <option value="Montaj detector gaze/senzor">Montaj detector gaze/senzor</option>
+                  <option value="Execuții instalații termice cupru">Execuții instalații termice cupru</option>
+                  <option value="Execuții instalații termice PPR">Execuții instalații termice PPR</option>
+                  <option value="Montare centrală termică">Montare centrală termică</option>
+                  <option value="Revizie sistem încălzire">Revizie sistem încălzire</option>
+                </select>
+              </div>
+              
+              <button
+                onClick={submitBooking}
+                disabled={submitting}
+                className="w-full py-4 bg-blue-600 text-white rounded-lg hover:bg-blue-700 font-semibold text-lg transition-all disabled:opacity-50"
+              >
+                {submitting ? 'Se trimite...' : 'Trimite cererea'}
+              </button>
+            </div>
+          </>
+        ) : (
+          <p className="text-center text-gray-500">Selectați o dată din calendar</p>
+        )}
+        
+        {/* Footer */}
+        <p className="text-center text-xs text-gray-400 mt-6">
+          Powered by <a href="https://revizioapp.ro" className="text-blue-500 hover:underline">RevizioApp</a>
+        </p>
+      </div>
+    </div>
+  );
+}
+
+// ==================== MAIN APP WRAPPER ====================
+// Check if we're on a booking page
+const bookingMatch = window.location.pathname.match(/\/book\/(.+)/);
+
+export default function App() {
+  if (bookingMatch) {
+    return <BookingPage bookingCode={bookingMatch[1]} />;
+  }
+  return <BoilerCRM />;
+}
+
+function BoilerCRM() {
   // License state
   const [licenseStatus, setLicenseStatus] = useState('checking'); // checking, inactive, active, expired, suspended
   const [licenseInfo, setLicenseInfo] = useState(null);
@@ -3387,6 +3781,9 @@ Mulțumim! 🙏`;
                           {booking.client_address && (
                             <p className="text-xs text-gray-500">📍 {booking.client_address}</p>
                           )}
+                          {booking.service_type && (
+                            <p className="text-xs text-blue-600 font-medium">🔧 {booking.service_type}</p>
+                          )}
                         </div>
                         <div className="flex gap-2">
                           <button
@@ -3457,7 +3854,7 @@ Mulțumim! 🙏`;
               <ol className="list-decimal list-inside space-y-1">
                 <li>Trimiteți link-ul clientului pe WhatsApp</li>
                 <li>Clientul alege data și ora dorită</li>
-                <li>Completează numele și telefonul</li>
+                <li>Completează numele, telefonul, adresa și tipul serviciului</li>
                 <li>Primiți notificare și puteți confirma/respinge</li>
               </ol>
             </div>
