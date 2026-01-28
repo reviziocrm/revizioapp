@@ -83,149 +83,8 @@ const deviceSession = {
   }
 };
 
-// Resend API configuration
+// Resend API configuration (for future email notifications)
 const RESEND_API_KEY = 're_DVmr1v2j_BpY8932gfZLXeQ7NzP9ZW1tB';
-
-// Booking system functions
-const bookingSystem = {
-  // Generate unique booking code
-  generateCode() {
-    return 'BK' + Date.now().toString(36).toUpperCase() + Math.random().toString(36).substring(2, 6).toUpperCase();
-  },
-  
-  // Get or create operator availability settings
-  async getAvailability(operatorEmail) {
-    try {
-      const response = await fetch(
-        `${SUPABASE_URL}/rest/v1/operator_availability?operator_email=eq.${encodeURIComponent(operatorEmail)}&select=*`,
-        {
-          headers: {
-            'apikey': SUPABASE_ANON_KEY,
-            'Authorization': `Bearer ${SUPABASE_ANON_KEY}`
-          }
-        }
-      );
-      const data = await response.json();
-      return data.length > 0 ? data[0] : null;
-    } catch (error) {
-      console.error('Error getting availability:', error);
-      return null;
-    }
-  },
-  
-  // Save operator availability settings
-  async saveAvailability(settings) {
-    try {
-      // Check if exists
-      const existing = await this.getAvailability(settings.operator_email);
-      
-      if (existing) {
-        // Update
-        const response = await fetch(
-          `${SUPABASE_URL}/rest/v1/operator_availability?operator_email=eq.${encodeURIComponent(settings.operator_email)}`,
-          {
-            method: 'PATCH',
-            headers: {
-              'apikey': SUPABASE_ANON_KEY,
-              'Authorization': `Bearer ${SUPABASE_ANON_KEY}`,
-              'Content-Type': 'application/json',
-              'Prefer': 'return=representation'
-            },
-            body: JSON.stringify({
-              ...settings,
-              updated_at: new Date().toISOString()
-            })
-          }
-        );
-        return response.ok;
-      } else {
-        // Insert
-        const response = await fetch(
-          `${SUPABASE_URL}/rest/v1/operator_availability`,
-          {
-            method: 'POST',
-            headers: {
-              'apikey': SUPABASE_ANON_KEY,
-              'Authorization': `Bearer ${SUPABASE_ANON_KEY}`,
-              'Content-Type': 'application/json',
-              'Prefer': 'return=representation'
-            },
-            body: JSON.stringify({
-              ...settings,
-              booking_code: settings.booking_code || this.generateCode()
-            })
-          }
-        );
-        return response.ok;
-      }
-    } catch (error) {
-      console.error('Error saving availability:', error);
-      return false;
-    }
-  },
-  
-  // Get bookings for operator
-  async getBookings(operatorEmail, onlyNew = false) {
-    try {
-      let url = `${SUPABASE_URL}/rest/v1/bookings?operator_email=eq.${encodeURIComponent(operatorEmail)}&select=*&order=created_at.desc`;
-      if (onlyNew) {
-        url += '&notified_in_app=eq.false';
-      }
-      const response = await fetch(url, {
-        headers: {
-          'apikey': SUPABASE_ANON_KEY,
-          'Authorization': `Bearer ${SUPABASE_ANON_KEY}`
-        }
-      });
-      return await response.json();
-    } catch (error) {
-      console.error('Error getting bookings:', error);
-      return [];
-    }
-  },
-  
-  // Mark booking as notified in app
-  async markAsNotified(bookingId) {
-    try {
-      await fetch(
-        `${SUPABASE_URL}/rest/v1/bookings?id=eq.${bookingId}`,
-        {
-          method: 'PATCH',
-          headers: {
-            'apikey': SUPABASE_ANON_KEY,
-            'Authorization': `Bearer ${SUPABASE_ANON_KEY}`,
-            'Content-Type': 'application/json'
-          },
-          body: JSON.stringify({ notified_in_app: true })
-        }
-      );
-    } catch (error) {
-      console.error('Error marking as notified:', error);
-    }
-  },
-  
-  // Update booking status
-  async updateBookingStatus(bookingId, status) {
-    try {
-      const response = await fetch(
-        `${SUPABASE_URL}/rest/v1/bookings?id=eq.${bookingId}`,
-        {
-          method: 'PATCH',
-          headers: {
-            'apikey': SUPABASE_ANON_KEY,
-            'Authorization': `Bearer ${SUPABASE_ANON_KEY}`,
-            'Content-Type': 'application/json'
-          },
-          body: JSON.stringify({ status })
-        }
-      );
-      return response.ok;
-    } catch (error) {
-      console.error('Error updating booking status:', error);
-      return false;
-    }
-  }
-};
 
 // Storage wrapper pentru localStorage (înlocuiește storage)
 const storage = {
@@ -842,64 +701,93 @@ export default function BoilerCRM() {
 
   // ========== ONLINE BOOKING SYSTEM FUNCTIONS ==========
   
-  // Load booking availability settings
-  const loadBookingSettings = async () => {
+  // Generate booking link for this operator
+  const generateBookingLink = async () => {
     if (!licenseInfo?.email) return;
     
-    const availability = await bookingSystem.getAvailability(licenseInfo.email);
-    if (availability) {
-      setBookingAvailability({
-        operator_name: availability.operator_name || '',
-        company_name: availability.company_name || '',
-        phone: availability.phone || '',
-        working_days: availability.working_days || ['1', '2', '3', '4', '5'],
-        start_hour: availability.start_hour || 8,
-        end_hour: availability.end_hour || 18,
-        slot_duration: availability.slot_duration || 60,
-        booking_code: availability.booking_code || ''
-      });
-      if (availability.booking_code) {
-        setBookingLink(`${window.location.origin}/book/${availability.booking_code}`);
-      }
-    }
-  };
-  
-  // Save booking availability settings
-  const saveBookingSettings = async () => {
-    if (!licenseInfo?.email) return;
+    const code = 'BK' + Date.now().toString(36).toUpperCase() + Math.random().toString(36).substring(2, 6).toUpperCase();
     
-    const code = bookingAvailability.booking_code || bookingSystem.generateCode();
-    
+    // Save minimal settings to Supabase
     const settings = {
       operator_email: licenseInfo.email,
-      operator_name: bookingAvailability.operator_name,
-      company_name: bookingAvailability.company_name,
-      phone: bookingAvailability.phone,
-      working_days: bookingAvailability.working_days,
-      start_hour: bookingAvailability.start_hour,
-      end_hour: bookingAvailability.end_hour,
-      slot_duration: bookingAvailability.slot_duration,
       booking_code: code
     };
     
-    const success = await bookingSystem.saveAvailability(settings);
-    if (success) {
-      setBookingAvailability(prev => ({ ...prev, booking_code: code }));
-      setBookingLink(`${window.location.origin}/book/${code}`);
-      alert('Setările au fost salvate cu succes!');
-    } else {
-      alert('Eroare la salvarea setărilor. Încercați din nou.');
+    try {
+      const response = await fetch(
+        `${SUPABASE_URL}/rest/v1/operator_availability`,
+        {
+          method: 'POST',
+          headers: {
+            'apikey': SUPABASE_ANON_KEY,
+            'Authorization': `Bearer ${SUPABASE_ANON_KEY}`,
+            'Content-Type': 'application/json',
+            'Prefer': 'return=representation'
+          },
+          body: JSON.stringify(settings)
+        }
+      );
+      
+      if (response.ok) {
+        const link = `${window.location.origin}/book/${code}`;
+        setBookingLink(link);
+        setBookingAvailability(prev => ({ ...prev, booking_code: code }));
+      } else {
+        alert('Eroare la generarea link-ului. Încercați din nou.');
+      }
+    } catch (error) {
+      console.error('Error generating booking link:', error);
+      alert('Eroare la generarea link-ului.');
     }
+  };
+  
+  // Load existing booking link
+  const loadBookingSettings = async () => {
+    if (!licenseInfo?.email) return;
+    
+    try {
+      const response = await fetch(
+        `${SUPABASE_URL}/rest/v1/operator_availability?operator_email=eq.${encodeURIComponent(licenseInfo.email)}&select=*`,
+        {
+          headers: {
+            'apikey': SUPABASE_ANON_KEY,
+            'Authorization': `Bearer ${SUPABASE_ANON_KEY}`
+          }
+        }
+      );
+      const data = await response.json();
+      if (data.length > 0 && data[0].booking_code) {
+        setBookingLink(`${window.location.origin}/book/${data[0].booking_code}`);
+        setBookingAvailability(prev => ({ ...prev, booking_code: data[0].booking_code }));
+      }
+    } catch (error) {
+      console.error('Error loading booking settings:', error);
+    }
+    
+    // Also load all bookings
+    await loadAllBookings();
   };
   
   // Check for new bookings
   const checkNewBookings = async () => {
     if (!licenseInfo?.email) return;
     
-    const newOnes = await bookingSystem.getBookings(licenseInfo.email, true);
-    if (newOnes.length > 0) {
-      setNewBookings(newOnes);
-      setShowNewBookingsAlert(true);
+    try {
+      const response = await fetch(
+        `${SUPABASE_URL}/rest/v1/bookings?operator_email=eq.${encodeURIComponent(licenseInfo.email)}&notified_in_app=eq.false&select=*&order=created_at.desc`,
+        {
+          headers: {
+            'apikey': SUPABASE_ANON_KEY,
+            'Authorization': `Bearer ${SUPABASE_ANON_KEY}`
+          }
+        }
+      );
+      const data = await response.json();
+      if (data.length > 0) {
+        setNewBookings(data);
+      }
+    } catch (error) {
+      console.error('Error checking new bookings:', error);
     }
   };
   
@@ -907,8 +795,21 @@ export default function BoilerCRM() {
   const loadAllBookings = async () => {
     if (!licenseInfo?.email) return;
     
-    const bookings = await bookingSystem.getBookings(licenseInfo.email);
-    setAllBookings(bookings);
+    try {
+      const response = await fetch(
+        `${SUPABASE_URL}/rest/v1/bookings?operator_email=eq.${encodeURIComponent(licenseInfo.email)}&select=*&order=created_at.desc`,
+        {
+          headers: {
+            'apikey': SUPABASE_ANON_KEY,
+            'Authorization': `Bearer ${SUPABASE_ANON_KEY}`
+          }
+        }
+      );
+      const data = await response.json();
+      setAllBookings(data);
+    } catch (error) {
+      console.error('Error loading bookings:', error);
+    }
   };
   
   // Accept booking and create appointment
@@ -926,7 +827,7 @@ export default function BoilerCRM() {
         nume: booking.client_name,
         telefon: booking.client_phone,
         adresa: booking.client_address || '',
-        tipServiciu: booking.service_type || 'Revizie',
+        tipServiciu: 'Revizie',
         periodicitate: '12',
         tipCentrala: '',
         model: '',
@@ -945,8 +846,8 @@ export default function BoilerCRM() {
       customerName: booking.client_name,
       customerPhone: booking.client_phone,
       dateTime: appointmentDateTime,
-      serviceType: booking.service_type || 'Revizie',
-      notes: booking.notes || `Programare online - ${booking.client_address || ''}`,
+      serviceType: 'Revizie',
+      notes: `Programare online${booking.client_address ? ' - ' + booking.client_address : ''}`,
       completed: false,
       cancelled: false,
       createdAt: new Date().toISOString(),
@@ -957,23 +858,49 @@ export default function BoilerCRM() {
     await storage.set(appointment.id, JSON.stringify(appointment));
     await loadAppointments();
     
-    // Update booking status
-    await bookingSystem.updateBookingStatus(booking.id, 'confirmed');
-    await bookingSystem.markAsNotified(booking.id);
+    // Update booking status in Supabase
+    try {
+      await fetch(
+        `${SUPABASE_URL}/rest/v1/bookings?id=eq.${booking.id}`,
+        {
+          method: 'PATCH',
+          headers: {
+            'apikey': SUPABASE_ANON_KEY,
+            'Authorization': `Bearer ${SUPABASE_ANON_KEY}`,
+            'Content-Type': 'application/json'
+          },
+          body: JSON.stringify({ status: 'confirmed', notified_in_app: true })
+        }
+      );
+    } catch (error) {
+      console.error('Error updating booking:', error);
+    }
     
     // Remove from new bookings list
     setNewBookings(prev => prev.filter(b => b.id !== booking.id));
-    
-    // Reload all bookings
     await loadAllBookings();
     
-    alert(`Programare confirmată pentru ${booking.client_name}!`);
+    alert(`✅ Programare confirmată pentru ${booking.client_name}!\nA fost adăugată în calendar.`);
   };
   
   // Reject booking
   const rejectBooking = async (booking) => {
-    await bookingSystem.updateBookingStatus(booking.id, 'cancelled');
-    await bookingSystem.markAsNotified(booking.id);
+    try {
+      await fetch(
+        `${SUPABASE_URL}/rest/v1/bookings?id=eq.${booking.id}`,
+        {
+          method: 'PATCH',
+          headers: {
+            'apikey': SUPABASE_ANON_KEY,
+            'Authorization': `Bearer ${SUPABASE_ANON_KEY}`,
+            'Content-Type': 'application/json'
+          },
+          body: JSON.stringify({ status: 'cancelled', notified_in_app: true })
+        }
+      );
+    } catch (error) {
+      console.error('Error rejecting booking:', error);
+    }
     
     setNewBookings(prev => prev.filter(b => b.id !== booking.id));
     await loadAllBookings();
@@ -985,7 +912,7 @@ export default function BoilerCRM() {
   const copyBookingLink = () => {
     if (bookingLink) {
       navigator.clipboard.writeText(bookingLink);
-      alert('Link copiat în clipboard!');
+      alert('Link copiat!');
     }
   };
   
@@ -993,7 +920,7 @@ export default function BoilerCRM() {
   const shareBookingLinkWhatsApp = () => {
     if (bookingLink) {
       const message = encodeURIComponent(
-        `Bună! Puteți programa o revizie online folosind acest link:\n${bookingLink}\n\nSelectați data și ora convenabilă pentru dumneavoastră.`
+        `Bună! Puteți programa o revizie online folosind acest link:\n${bookingLink}\n\nSelectați data și ora convenabilă.`
       );
       window.open(`https://wa.me/?text=${message}`, '_blank');
     }
@@ -3446,35 +3373,26 @@ Mulțumim! 🙏`;
                     <Bell className="animate-pulse" size={18} />
                     {newBookings.length} programări noi!
                   </h4>
-                  <button
-                    onClick={() => {
-                      loadAllBookings();
-                      setShowBookingsList(true);
-                    }}
-                    className="text-sm text-green-600 hover:text-green-800 underline"
-                  >
-                    Vezi toate
-                  </button>
                 </div>
                 <div className="space-y-2">
-                  {newBookings.slice(0, 3).map(booking => (
+                  {newBookings.map(booking => (
                     <div key={booking.id} className="bg-white rounded-lg p-3 border border-green-100">
                       <div className="flex justify-between items-start">
                         <div>
                           <p className="font-medium">{booking.client_name}</p>
                           <p className="text-sm text-gray-600">{booking.client_phone}</p>
                           <p className="text-sm text-gray-600">
-                            {new Date(booking.booking_date).toLocaleDateString('ro-RO')} la {booking.booking_time?.substring(0, 5)}
+                            📅 {new Date(booking.booking_date).toLocaleDateString('ro-RO')} la {booking.booking_time?.substring(0, 5)}
                           </p>
-                          {booking.service_type && (
-                            <p className="text-xs text-gray-500">{booking.service_type}</p>
+                          {booking.client_address && (
+                            <p className="text-xs text-gray-500">📍 {booking.client_address}</p>
                           )}
                         </div>
                         <div className="flex gap-2">
                           <button
                             onClick={() => acceptBooking(booking)}
                             className="p-2 bg-green-600 text-white rounded-lg hover:bg-green-700"
-                            title="Acceptă"
+                            title="Acceptă și creează programare"
                           >
                             <Check size={16} />
                           </button>
@@ -3494,163 +3412,67 @@ Mulțumim! 🙏`;
             )}
             
             {/* Booking Link Section */}
-            {bookingLink && (
-              <div className="mb-4 bg-blue-50 border border-blue-200 rounded-lg p-4">
-                <p className="text-sm font-medium text-blue-800 mb-2">Link-ul tău de programare:</p>
-                <div className="flex gap-2">
-                  <input
-                    type="text"
-                    value={bookingLink}
-                    readOnly
-                    className="flex-1 px-3 py-2 bg-white border border-blue-200 rounded-lg text-sm"
-                  />
-                  <button
-                    onClick={copyBookingLink}
-                    className="px-3 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700"
-                    title="Copiază"
-                  >
-                    <Copy size={18} />
-                  </button>
+            <div className="bg-blue-50 border border-blue-200 rounded-lg p-4 mb-4">
+              <p className="text-sm font-medium text-blue-800 mb-3">
+                Trimite acest link clienților pentru a-și programa singuri o revizie:
+              </p>
+              {bookingLink ? (
+                <div className="space-y-3">
+                  <div className="flex gap-2">
+                    <input
+                      type="text"
+                      value={bookingLink}
+                      readOnly
+                      className="flex-1 px-3 py-2 bg-white border border-blue-200 rounded-lg text-sm"
+                    />
+                    <button
+                      onClick={copyBookingLink}
+                      className="px-3 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700"
+                      title="Copiază link"
+                    >
+                      <Copy size={18} />
+                    </button>
+                  </div>
                   <button
                     onClick={shareBookingLinkWhatsApp}
-                    className="px-3 py-2 bg-green-600 text-white rounded-lg hover:bg-green-700"
-                    title="Trimite pe WhatsApp"
+                    className="w-full py-3 bg-green-600 text-white rounded-lg hover:bg-green-700 font-medium flex items-center justify-center gap-2"
                   >
-                    <MessageCircle size={18} />
+                    <MessageCircle size={20} />
+                    Trimite pe WhatsApp
                   </button>
                 </div>
-              </div>
-            )}
-            
-            {/* Settings Form */}
-            <div className="space-y-4">
-              <div>
-                <label className="block text-sm font-medium text-gray-700 mb-1">Numele tău</label>
-                <input
-                  type="text"
-                  value={bookingAvailability.operator_name}
-                  onChange={(e) => setBookingAvailability(prev => ({ ...prev, operator_name: e.target.value }))}
-                  placeholder="Ex: Ion Popescu"
-                  className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500"
-                />
-              </div>
-              
-              <div>
-                <label className="block text-sm font-medium text-gray-700 mb-1">Numele firmei</label>
-                <input
-                  type="text"
-                  value={bookingAvailability.company_name}
-                  onChange={(e) => setBookingAvailability(prev => ({ ...prev, company_name: e.target.value }))}
-                  placeholder="Ex: Termo Service SRL"
-                  className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500"
-                />
-              </div>
-              
-              <div>
-                <label className="block text-sm font-medium text-gray-700 mb-1">Telefon contact</label>
-                <input
-                  type="tel"
-                  value={bookingAvailability.phone}
-                  onChange={(e) => setBookingAvailability(prev => ({ ...prev, phone: e.target.value }))}
-                  placeholder="Ex: 0722 123 456"
-                  className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500"
-                />
-              </div>
-              
-              <div>
-                <label className="block text-sm font-medium text-gray-700 mb-2">Zile disponibile</label>
-                <div className="flex flex-wrap gap-2">
-                  {[
-                    { value: '1', label: 'Lun' },
-                    { value: '2', label: 'Mar' },
-                    { value: '3', label: 'Mie' },
-                    { value: '4', label: 'Joi' },
-                    { value: '5', label: 'Vin' },
-                    { value: '6', label: 'Sâm' },
-                    { value: '0', label: 'Dum' }
-                  ].map(day => (
-                    <button
-                      key={day.value}
-                      onClick={() => {
-                        setBookingAvailability(prev => ({
-                          ...prev,
-                          working_days: prev.working_days.includes(day.value)
-                            ? prev.working_days.filter(d => d !== day.value)
-                            : [...prev.working_days, day.value]
-                        }));
-                      }}
-                      className={`px-3 py-2 rounded-lg text-sm font-medium transition ${
-                        bookingAvailability.working_days.includes(day.value)
-                          ? 'bg-blue-600 text-white'
-                          : 'bg-gray-100 text-gray-700 hover:bg-gray-200'
-                      }`}
-                    >
-                      {day.label}
-                    </button>
-                  ))}
-                </div>
-              </div>
-              
-              <div className="grid grid-cols-2 gap-4">
-                <div>
-                  <label className="block text-sm font-medium text-gray-700 mb-1">Ora început</label>
-                  <select
-                    value={bookingAvailability.start_hour}
-                    onChange={(e) => setBookingAvailability(prev => ({ ...prev, start_hour: parseInt(e.target.value) }))}
-                    className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500"
-                  >
-                    {Array.from({ length: 24 }, (_, i) => (
-                      <option key={i} value={i}>{i.toString().padStart(2, '0')}:00</option>
-                    ))}
-                  </select>
-                </div>
-                <div>
-                  <label className="block text-sm font-medium text-gray-700 mb-1">Ora sfârșit</label>
-                  <select
-                    value={bookingAvailability.end_hour}
-                    onChange={(e) => setBookingAvailability(prev => ({ ...prev, end_hour: parseInt(e.target.value) }))}
-                    className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500"
-                  >
-                    {Array.from({ length: 24 }, (_, i) => (
-                      <option key={i} value={i}>{i.toString().padStart(2, '0')}:00</option>
-                    ))}
-                  </select>
-                </div>
-              </div>
-              
-              <div>
-                <label className="block text-sm font-medium text-gray-700 mb-1">Durată programare</label>
-                <select
-                  value={bookingAvailability.slot_duration}
-                  onChange={(e) => setBookingAvailability(prev => ({ ...prev, slot_duration: parseInt(e.target.value) }))}
-                  className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500"
-                >
-                  <option value={30}>30 minute</option>
-                  <option value={60}>1 oră</option>
-                  <option value={90}>1 oră 30 minute</option>
-                  <option value={120}>2 ore</option>
-                </select>
-              </div>
-              
-              <button
-                onClick={saveBookingSettings}
-                className="w-full py-3 bg-blue-600 text-white rounded-lg hover:bg-blue-700 font-medium"
-              >
-                {bookingLink ? 'Actualizează setările' : 'Generează link de programare'}
-              </button>
-              
-              {bookingLink && (
+              ) : (
                 <button
-                  onClick={() => {
-                    loadAllBookings();
-                    setShowBookingsList(true);
-                  }}
-                  className="w-full py-3 bg-gray-100 text-gray-700 rounded-lg hover:bg-gray-200 font-medium"
+                  onClick={generateBookingLink}
+                  className="w-full py-3 bg-blue-600 text-white rounded-lg hover:bg-blue-700 font-medium"
                 >
-                  Vezi toate programările online
+                  Generează link de programare
                 </button>
               )}
             </div>
+            
+            {/* Info */}
+            <div className="bg-gray-50 rounded-lg p-4 text-sm text-gray-600">
+              <p className="font-medium text-gray-700 mb-2">Cum funcționează:</p>
+              <ol className="list-decimal list-inside space-y-1">
+                <li>Trimiteți link-ul clientului pe WhatsApp</li>
+                <li>Clientul alege data și ora dorită</li>
+                <li>Completează numele și telefonul</li>
+                <li>Primiți notificare și puteți confirma/respinge</li>
+              </ol>
+            </div>
+            
+            {allBookings.length > 0 && (
+              <button
+                onClick={() => {
+                  loadAllBookings();
+                  setShowBookingsList(true);
+                }}
+                className="w-full mt-4 py-3 bg-gray-100 text-gray-700 rounded-lg hover:bg-gray-200 font-medium"
+              >
+                Vezi istoricul programărilor ({allBookings.length})
+              </button>
+            )}
           </div>
         </div>
       )}
